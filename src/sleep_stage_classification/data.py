@@ -145,6 +145,14 @@ def extract_sleep_edf_features(
     if abs(raw.info["sfreq"] - sample_rate_hz) > 1e-6:
         raw.resample(sample_rate_hz, npad="auto", verbose=False)
 
+    # Normalize against the complete subject recording.  Doing this inside the
+    # epoch loop would make every 30-second segment independently mean-zero,
+    # which is not the per-subject normalization specified for this project.
+    recording_signal = raw.get_data()
+    if denoise:
+        recording_signal = wavelet_denoise(recording_signal)
+    recording_signal = zscore_per_channel(recording_signal)
+
     rows = []
     samples_per_epoch = int(round(sample_rate_hz * epoch_seconds))
     for annotation in raw.annotations:
@@ -160,12 +168,9 @@ def extract_sleep_edf_features(
             stop = start + samples_per_epoch
             if start < 0 or stop > raw.n_times:
                 continue
-            signal = raw.get_data(start=start, stop=stop)
+            signal = recording_signal[:, start:stop]
             if signal.shape[1] != samples_per_epoch:
                 continue
-            if denoise:
-                signal = wavelet_denoise(signal)
-            signal = zscore_per_channel(signal)
             row = {
                 "subject_id": pair.subject_id,
                 "record_id": pair.record_id,

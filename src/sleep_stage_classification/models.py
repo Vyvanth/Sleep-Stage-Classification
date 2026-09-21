@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 
 import joblib
@@ -13,6 +14,7 @@ from sklearn.metrics import accuracy_score, cohen_kappa_score, f1_score
 from sklearn.model_selection import GroupShuffleSplit, train_test_split
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import LabelEncoder, StandardScaler
+from sklearn.feature_selection import SelectKBest, mutual_info_classif
 
 
 @dataclass
@@ -26,6 +28,8 @@ class TrainingResult:
     test_indices: np.ndarray
     classifier_name: str
     sampler_name: str
+    feature_selection_name: str
+    selected_feature_names: list[str]
 
 
 def make_baseline_classifier(classifier: str = "auto", random_state: int = 103):
@@ -66,12 +70,41 @@ def make_baseline_classifier(classifier: str = "auto", random_state: int = 103):
     )
 
 
-def make_pipeline(classifier: str = "auto", sampler: str = "none", random_state: int = 103):
+def make_feature_selector(feature_selection: str = "mutual_info", select_k: int = 40, random_state: int = 103):
+    """Create the supervised feature-selection stage used during training."""
+
+    if feature_selection == "none":
+        return None, "none"
+    if feature_selection == "mutual_info":
+        if select_k <= 0:
+            raise ValueError("select_k must be positive.")
+        return (
+            SelectKBest(
+                score_func=partial(mutual_info_classif, random_state=random_state),
+                k=select_k,
+            ),
+            "mutual_info",
+        )
+    raise ValueError("feature_selection must be one of: none, mutual_info")
+
+
+def make_pipeline(
+    classifier: str = "auto",
+    sampler: str = "none",
+    feature_selection: str = "mutual_info",
+    select_k: int = 40,
+    random_state: int = 103,
+):
     """Create a training pipeline with optional imbalance handling."""
 
     estimator, classifier_name = make_baseline_classifier(classifier=classifier, random_state=random_state)
+    selector, selector_name = make_feature_selector(feature_selection, select_k, random_state)
     if sampler == "none":
-        return Pipeline([("scale", StandardScaler()), ("clf", estimator)]), classifier_name, "none"
+        steps = [("scale", StandardScaler())]
+        if selector is not None:
+            steps.append(("select", selector))
+        steps.append(("clf", estimator))
+        return Pipeline(steps), classifier_name, "none", selector_name
     if sampler == "smote-rus":
         try:
             from imblearn.over_sampling import SMOTE
@@ -79,18 +112,15 @@ def make_pipeline(classifier: str = "auto", sampler: str = "none", random_state:
             from imblearn.under_sampling import RandomUnderSampler
         except ImportError as exc:
             raise ImportError("imbalanced-learn is not installed. Run: pip install imbalanced-learn") from exc
-        return (
-            ImbPipeline(
-                [
-                    ("scale", StandardScaler()),
-                    ("smote", SMOTE(random_state=random_state, k_neighbors=3)),
-                    ("rus", RandomUnderSampler(random_state=random_state)),
-                    ("clf", estimator),
-                ]
-            ),
-            classifier_name,
-            "smote-rus",
-        )
+        steps = [
+            ("scale", StandardScaler()),
+            ("smote", SMOTE(random_state=random_state, k_neighbors=3)),
+            ("rus", RandomUnderSampler(random_state=random_state)),
+        ]
+        if selector is not None:
+            steps.append(("select", selector))
+        steps.append(("clf", estimator))
+        return ImbPipeline(steps), classifier_name, "smote-rus", selector_name
     raise ValueError("sampler must be one of: none, smote-rus")
 
 
@@ -100,6 +130,8 @@ def train_baseline(
     groups: pd.Series | None = None,
     classifier: str = "auto",
     sampler: str = "none",
+    feature_selection: str = "mutual_info",
+    select_k: int = 40,
     random_state: int = 103,
 ) -> TrainingResult:
     """Train an epoch-independent baseline and evaluate a held-out split."""
@@ -125,10 +157,18 @@ def train_baseline(
         split_strategy = "epoch_holdout_smoke_test"
     else:
         raise ValueError("Need at least two subjects for subject-wise validation, or at least two samples per class for a smoke split.")
-    pipeline, classifier_name, sampler_name = make_pipeline(classifier=classifier, sampler=sampler, random_state=random_state)
+    pipeline, classifier_name, sampler_name, selector_name = make_pipeline(
+        classifier=classifier,
+        sampler=sampler,
+        feature_selection=feature_selection,
+        select_k=select_k,
+        random_state=random_state,
+    )
     pipeline.fit(X.iloc[train_idx], y_encoded[train_idx])
     pred = pipeline.predict(X.iloc[test_idx])
     metrics = classification_metrics(y_encoded[test_idx], pred)
+    selector = pipeline.named_steps.get("select")
+    selected_feature_names = list(X.columns[selector.get_support()]) if selector is not None else list(X.columns)
     return TrainingResult(
         pipeline,
         label_encoder,
@@ -139,6 +179,8 @@ def train_baseline(
         test_idx,
         classifier_name,
         sampler_name,
+        selector_name,
+        selected_feature_names,
     )
 
 

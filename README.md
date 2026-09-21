@@ -7,6 +7,7 @@ This repository implements the project plan from Review 1:
 
 - preprocess PSG signals from EEG, EOG, and EMG channels
 - extract time, frequency, Hjorth, entropy, and transient-energy features
+- normalize each subject recording and select the most informative features during training
 - train an epoch-independent baseline classifier
 - apply temporal post-processing over consecutive epochs
 - generate per-epoch feature attributions
@@ -82,6 +83,39 @@ python -m sleep_stage_classification.cli train `
   --classifier lightgbm `
   --sampler smote-rus
 ```
+
+Generate per-epoch TreeSHAP explanations for a trained model:
+
+```powershell
+python -m sleep_stage_classification.cli explain `
+  --features data/processed/sleep_edf_features_full.csv `
+  --model models/lightgbm_smote_rus_full.joblib `
+  --output outputs/attributions.csv `
+  --top-k 5
+```
+
+To generate a Gemini report, set `GEMINI_API_KEY` in your Windows user environment variables, open a new terminal, and run:
+
+```powershell
+python -m sleep_stage_classification.cli gemini-report `
+  --predictions outputs/predictions.csv `
+  --attributions outputs/attributions.csv `
+  --record-id SC4001 `
+  --report-out outputs/SC4001_gemini_report.txt
+```
+
+Evaluate the report's factual coverage against its model metrics and SHAP evidence:
+
+```powershell
+python -m sleep_stage_classification.cli evaluate-report `
+  --predictions outputs/predictions.csv `
+  --attributions outputs/attributions.csv `
+  --report outputs/SC4001_gemini_report.txt `
+  --record-id SC4001 `
+  --output outputs/SC4001_report_evaluation.json
+```
+
+Add `--use-bertscore` after installing the optional `bert-score` dependency to calculate semantic similarity against the deterministic evidence-grounded reference report.
 
 ## Generate A Report
 

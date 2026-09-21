@@ -12,8 +12,10 @@ import pandas as pd
 from .config import ID_TO_STAGE, STAGE_ORDER
 from .data import build_sleep_edf_feature_csv, load_feature_csv, make_synthetic_feature_csv
 from .evaluation import comparison_tables, confusion_matrix_frame
-from .explainability import top_linear_attributions
-from .models import predict_proba, save_training_result, train_baseline
+from .explainability import tree_shap_attributions
+from .gemini_reporting import generate_gemini_report
+from .models import load_training_result, predict_proba, save_training_result, train_baseline
+from .report_evaluation import evaluate_report
 from .reporting import generate_grounded_report
 from .temporal import default_sleep_transition_matrix, estimate_transition_matrix, viterbi_smooth
 
@@ -30,6 +32,8 @@ def cmd_demo(args: argparse.Namespace) -> None:
         args.transition_weight,
         args.classifier,
         args.sampler,
+        args.feature_selection,
+        args.select_k,
     )
 
 
@@ -42,6 +46,8 @@ def cmd_train(args: argparse.Namespace) -> None:
         args.transition_weight,
         args.classifier,
         args.sampler,
+        args.feature_selection,
+        args.select_k,
     )
 
 
@@ -66,9 +72,19 @@ def train_and_write(
     transition_weight: float = 0.35,
     classifier: str = "auto",
     sampler: str = "none",
+    feature_selection: str = "mutual_info",
+    select_k: int = 40,
 ) -> None:
     X, y, metadata = load_feature_csv(features_path)
-    result = train_baseline(X, y, groups=metadata["subject_id"], classifier=classifier, sampler=sampler)
+    result = train_baseline(
+        X,
+        y,
+        groups=metadata["subject_id"],
+        classifier=classifier,
+        sampler=sampler,
+        feature_selection=feature_selection,
+        select_k=select_k,
+    )
     probabilities = predict_proba(result.model, X)
     y_encoded = result.label_encoder.transform(y)
     transition = estimate_transition_matrix(y_encoded[result.train_indices], len(result.label_encoder.classes_))
@@ -86,14 +102,7 @@ def train_and_write(
     predictions_path = output_dir / "predictions.csv"
     predictions_path.parent.mkdir(parents=True, exist_ok=True)
     predictions.to_csv(predictions_path, index=False)
-    attributions = top_linear_attributions(
-        pd.concat([metadata, X], axis=1),
-        probabilities,
-        result.feature_names,
-    )
-    attributions_path = output_dir / "attributions.csv"
-    attributions.to_csv(attributions_path, index=False)
-    report = generate_grounded_report(predictions, attributions)
+    report = generate_grounded_report(predictions)
     (output_dir / "sleep_report.txt").write_text(report, encoding="utf-8")
     test_true = y_encoded[result.test_indices]
     test_baseline = baseline_pred_ids[result.test_indices]
@@ -109,6 +118,9 @@ def train_and_write(
         "classes": class_names,
         "classifier": result.classifier_name,
         "sampler": result.sampler_name,
+        "feature_selection": result.feature_selection_name,
+        "selected_feature_count": len(result.selected_feature_names),
+        "selected_features": result.selected_feature_names,
         "transition_weight": transition_weight,
         "overall": overall_table.to_dict(orient="records"),
         "per_class": per_class_table.to_dict(orient="records"),
@@ -136,6 +148,27 @@ def train_and_write(
     print(f"Wrote report: {output_dir / 'sleep_report.txt'}")
 
 
+def cmd_explain(args: argparse.Namespace) -> None:
+    X, _, metadata = load_feature_csv(args.features)
+    result = load_training_result(args.model)
+    probabilities = predict_proba(result.model, X)
+    predicted_ids = np.argmax(probabilities, axis=1)
+    predicted_stages = result.label_encoder.inverse_transform(predicted_ids)
+    attributions = tree_shap_attributions(
+        pd.concat([metadata, X], axis=1),
+        result.model,
+        result.feature_names,
+        result.selected_feature_names,
+        predicted_ids,
+        predicted_stages,
+        top_k=args.top_k,
+    )
+    output_path = Path(args.output)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    attributions.to_csv(output_path, index=False)
+    print(f"Wrote SHAP attributions: {output_path}")
+
+
 def smooth_by_record(probabilities: np.ndarray, metadata: pd.DataFrame, transition: np.ndarray, transition_weight: float = 0.35) -> np.ndarray:
     """Apply Viterbi smoothing independently to each recording."""
 
@@ -160,11 +193,54 @@ def f1_delta(per_class_table: pd.DataFrame, stage: str) -> float | None:
 def cmd_report(args: argparse.Namespace) -> None:
     predictions = pd.read_csv(args.predictions)
     attributions = pd.read_csv(args.attributions) if args.attributions else None
+    predictions, attributions = select_record(predictions, attributions, args.record_id)
     report = generate_grounded_report(predictions, attributions)
     out = Path(args.report_out)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(report, encoding="utf-8")
     print(f"Wrote report: {out}")
+
+
+def cmd_gemini_report(args: argparse.Namespace) -> None:
+    predictions = pd.read_csv(args.predictions)
+    attributions = pd.read_csv(args.attributions) if args.attributions else None
+    predictions, attributions = select_record(predictions, attributions, args.record_id)
+    report = generate_gemini_report(predictions, attributions, model_name=args.model)
+    out = Path(args.report_out)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(report, encoding="utf-8")
+    print(f"Wrote Gemini report: {out}")
+
+
+def cmd_evaluate_report(args: argparse.Namespace) -> None:
+    predictions = pd.read_csv(args.predictions)
+    attributions = pd.read_csv(args.attributions)
+    predictions, attributions = select_record(predictions, attributions, args.record_id)
+    report = Path(args.report).read_text(encoding="utf-8")
+    evaluation = evaluate_report(report, predictions, attributions, use_bertscore=args.use_bertscore)
+    out = Path(args.output)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(evaluation, indent=2), encoding="utf-8")
+    print(f"Wrote report evaluation: {out}")
+
+
+def select_record(
+    predictions: pd.DataFrame,
+    attributions: pd.DataFrame | None,
+    record_id: str | None,
+) -> tuple[pd.DataFrame, pd.DataFrame | None]:
+    """Return one recording when requested so reports never mix subjects."""
+
+    if not record_id:
+        return predictions, attributions
+    if "record_id" not in predictions:
+        raise ValueError("The predictions file has no record_id column.")
+    selected_predictions = predictions[predictions["record_id"] == record_id].copy()
+    if selected_predictions.empty:
+        raise ValueError(f"No predictions found for record_id={record_id!r}.")
+    if attributions is not None and "record_id" in attributions:
+        attributions = attributions[attributions["record_id"] == record_id].copy()
+    return selected_predictions, attributions
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -175,6 +251,8 @@ def build_parser() -> argparse.ArgumentParser:
     demo.add_argument("--transition-weight", type=float, default=0.35)
     demo.add_argument("--classifier", choices=["auto", "lightgbm", "random_forest"], default="auto")
     demo.add_argument("--sampler", choices=["none", "smote-rus"], default="none")
+    demo.add_argument("--feature-selection", choices=["none", "mutual_info"], default="mutual_info")
+    demo.add_argument("--select-k", type=int, default=40)
     demo.set_defaults(func=cmd_demo)
     extract = sub.add_parser("extract-sleep-edf", help="Extract epoch features from Sleep-EDF Expanded EDF files")
     extract.add_argument(
@@ -201,12 +279,36 @@ def build_parser() -> argparse.ArgumentParser:
     train.add_argument("--transition-weight", type=float, default=0.35, help="Strength of temporal transition prior during Viterbi smoothing")
     train.add_argument("--classifier", choices=["auto", "lightgbm", "random_forest"], default="auto")
     train.add_argument("--sampler", choices=["none", "smote-rus"], default="none")
+    train.add_argument("--feature-selection", choices=["none", "mutual_info"], default="mutual_info")
+    train.add_argument("--select-k", type=int, default=40, help="Number of features retained after selection")
     train.set_defaults(func=cmd_train)
+    explain = sub.add_parser("explain", help="Generate TreeSHAP explanations for a trained baseline model")
+    explain.add_argument("--features", required=True)
+    explain.add_argument("--model", required=True)
+    explain.add_argument("--output", required=True)
+    explain.add_argument("--top-k", type=int, default=5, help="Explanatory features retained per epoch")
+    explain.set_defaults(func=cmd_explain)
     report = sub.add_parser("report", help="Generate a grounded report from predictions")
     report.add_argument("--predictions", required=True)
     report.add_argument("--attributions")
     report.add_argument("--report-out", required=True)
+    report.add_argument("--record-id", help="Generate a report for one Sleep-EDF recording")
     report.set_defaults(func=cmd_report)
+    gemini_report = sub.add_parser("gemini-report", help="Generate a Gemini report from one recording's metrics and SHAP evidence")
+    gemini_report.add_argument("--predictions", required=True)
+    gemini_report.add_argument("--attributions", required=True)
+    gemini_report.add_argument("--record-id", required=True, help="Sleep-EDF recording to summarize")
+    gemini_report.add_argument("--report-out", required=True)
+    gemini_report.add_argument("--model", default="gemini-3.6-flash")
+    gemini_report.set_defaults(func=cmd_gemini_report)
+    evaluate = sub.add_parser("evaluate-report", help="Evaluate factual coverage and optional BERTScore for one Gemini report")
+    evaluate.add_argument("--predictions", required=True)
+    evaluate.add_argument("--attributions", required=True)
+    evaluate.add_argument("--report", required=True)
+    evaluate.add_argument("--record-id", required=True)
+    evaluate.add_argument("--output", required=True)
+    evaluate.add_argument("--use-bertscore", action="store_true")
+    evaluate.set_defaults(func=cmd_evaluate_report)
     return parser
 
 

@@ -15,8 +15,8 @@ def test_report_uses_attribution_evidence():
     predictions = pd.DataFrame({"predicted_stage": ["W", "N1", "N2"]})
     attributions = pd.DataFrame(
         [
-            {"feature": "EEG_delta_power", "direction": "high", "attribution": 0.7},
-            {"feature": "EMG_tkeo", "direction": "low", "attribution": 0.3},
+            {"feature": "EEG_delta_power", "direction": "increases", "attribution": 0.7},
+            {"feature": "EMG_tkeo", "direction": "decreases", "attribution": 0.3},
         ]
     )
     report = generate_grounded_report(predictions, attributions)
