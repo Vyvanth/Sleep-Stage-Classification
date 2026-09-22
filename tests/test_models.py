@@ -15,9 +15,9 @@ def test_training_selects_requested_number_of_features():
         y,
         groups=groups,
         classifier="random_forest",
-        feature_selection="mutual_info",
+        feature_selection="ensemble",
         select_k=3,
     )
 
-    assert result.feature_selection_name == "mutual_info"
+    assert result.feature_selection_name == "ensemble_lgbm_mi_permutation"
     assert len(result.selected_feature_names) == 3

@@ -72,8 +72,8 @@ def train_and_write(
     transition_weight: float = 0.35,
     classifier: str = "auto",
     sampler: str = "none",
-    feature_selection: str = "mutual_info",
-    select_k: int = 40,
+    feature_selection: str = "ensemble",
+    select_k: int = 67,
 ) -> None:
     X, y, metadata = load_feature_csv(features_path)
     result = train_baseline(
@@ -251,8 +251,8 @@ def build_parser() -> argparse.ArgumentParser:
     demo.add_argument("--transition-weight", type=float, default=0.35)
     demo.add_argument("--classifier", choices=["auto", "lightgbm", "random_forest"], default="auto")
     demo.add_argument("--sampler", choices=["none", "smote-rus"], default="none")
-    demo.add_argument("--feature-selection", choices=["none", "mutual_info"], default="mutual_info")
-    demo.add_argument("--select-k", type=int, default=40)
+    demo.add_argument("--feature-selection", choices=["none", "ensemble"], default="ensemble")
+    demo.add_argument("--select-k", type=int, default=67)
     demo.set_defaults(func=cmd_demo)
     extract = sub.add_parser("extract-sleep-edf", help="Extract epoch features from Sleep-EDF Expanded EDF files")
     extract.add_argument(
@@ -279,8 +279,8 @@ def build_parser() -> argparse.ArgumentParser:
     train.add_argument("--transition-weight", type=float, default=0.35, help="Strength of temporal transition prior during Viterbi smoothing")
     train.add_argument("--classifier", choices=["auto", "lightgbm", "random_forest"], default="auto")
     train.add_argument("--sampler", choices=["none", "smote-rus"], default="none")
-    train.add_argument("--feature-selection", choices=["none", "mutual_info"], default="mutual_info")
-    train.add_argument("--select-k", type=int, default=40, help="Number of features retained after selection")
+    train.add_argument("--feature-selection", choices=["none", "ensemble"], default="ensemble")
+    train.add_argument("--select-k", type=int, default=67, help="Maximum features retained after ensemble selection")
     train.set_defaults(func=cmd_train)
     explain = sub.add_parser("explain", help="Generate TreeSHAP explanations for a trained baseline model")
     explain.add_argument("--features", required=True)

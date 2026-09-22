@@ -23,10 +23,10 @@ def tree_shap_attributions(
         raise ImportError("SHAP is not installed. Run: pip install shap") from exc
 
     X = feature_frame[feature_names].astype(float)
-    transformed = model.named_steps["scale"].transform(X)
     selector = model.named_steps.get("select")
     if selector is not None:
-        transformed = selector.transform(transformed)
+        X = selector.transform(X)
+    transformed = model.named_steps["scale"].transform(X)
 
     if transformed.shape[1] != len(selected_feature_names):
         raise ValueError("Selected feature names do not match the trained pipeline.")

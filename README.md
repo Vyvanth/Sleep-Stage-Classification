@@ -7,7 +7,7 @@ This repository implements the project plan from Review 1:
 
 - preprocess PSG signals from EEG, EOG, and EMG channels
 - extract time, frequency, Hjorth, entropy, and transient-energy features
-- normalize each subject recording and select the most informative features during training
+- normalize each subject recording and use five-fold ensemble feature selection
 - train an epoch-independent baseline classifier
 - apply temporal post-processing over consecutive epochs
 - generate per-epoch feature attributions
@@ -81,8 +81,16 @@ python -m sleep_stage_classification.cli train `
   --model-out models/lightgbm_smote_rus_50_records.joblib `
   --metrics-out outputs/metrics_lightgbm_smote_rus_50_records.json `
   --classifier lightgbm `
-  --sampler smote-rus
+  --sampler smote-rus `
+  --feature-selection ensemble `
+  --select-k 67
 ```
+
+The default `ensemble` selector calculates LightGBM gain, mutual information,
+and macro-F1 permutation importance in five stratified folds on the training
+partition only. It rewards features that rank consistently across folds,
+applies the configured EEG/EOG/EMG weights (0.5/0.3/0.2), and removes features
+correlated above 0.9 before retaining up to 67 features.
 
 Generate per-epoch TreeSHAP explanations for a trained model:
 
