@@ -440,7 +440,11 @@ def cmd_temporal_benchmark(args: argparse.Namespace) -> None:
 
     print("[6/7] Training the window BiLSTM...", flush=True)
     selected = result.selected_feature_names
-    bilstm = WindowBiLSTM(feature_count=len(selected), window_size=args.lstm_window)
+    bilstm = WindowBiLSTM(
+        feature_count=len(selected),
+        window_size=args.lstm_window,
+        batch_size=args.lstm_batch_size,
+    )
     bilstm.fit(
         X_train[selected], y_train, train_records, train_epochs,
         epochs=args.lstm_epochs, patience=args.lstm_patience,
@@ -481,6 +485,8 @@ def cmd_temporal_benchmark(args: argparse.Namespace) -> None:
         "lightgbm_params": parameters,
         "nested_tuning": args.tune_on_training,
         "bilstm_window_size": args.lstm_window,
+        "bilstm_batch_size": args.lstm_batch_size,
+        "bilstm_device": bilstm.device_name_,
         "bilstm_validation_macro_f1": bilstm.validation_macro_f1_,
         "n1_f1": n1,
         "overall": overall.to_dict(orient="records"),
@@ -664,6 +670,7 @@ def build_parser() -> argparse.ArgumentParser:
     temporal_benchmark.add_argument("--lstm-window", type=int, default=11, help="Odd consecutive-epoch window size")
     temporal_benchmark.add_argument("--lstm-epochs", type=int, default=15)
     temporal_benchmark.add_argument("--lstm-patience", type=int, default=3)
+    temporal_benchmark.add_argument("--lstm-batch-size", type=int, default=256, help="Mini-batch size for memory-safe BiLSTM training")
     temporal_benchmark.add_argument("--context-lags", type=int, default=1, help="Use previous/next epoch spectral features from the same recording")
     temporal_benchmark.add_argument("--tune-on-training", action="store_true", help="Tune LightGBM only within the final training subjects before evaluation")
     temporal_benchmark.set_defaults(func=cmd_temporal_benchmark)

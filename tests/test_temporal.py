@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 
 from sleep_stage_classification.temporal import (
     estimate_transition_by_record,
@@ -6,6 +7,7 @@ from sleep_stage_classification.temporal import (
     smooth_by_record,
     viterbi_smooth,
 )
+from sleep_stage_classification.temporal_models import WindowBiLSTM
 
 
 def test_transition_matrix_rows_sum_to_one():
@@ -59,3 +61,19 @@ def test_record_aware_smoothing_preserves_input_row_order():
     )
 
     assert output.tolist() == [1, 0, 1, 0]
+
+
+def test_bilstm_uses_batched_predictions_without_dropping_sequence_centres():
+    pytest.importorskip("torch")
+    rng = np.random.default_rng(4)
+    X = rng.normal(size=(24, 3)).astype(np.float32)
+    labels = np.tile(np.arange(5), 5)[:24]
+    records = np.array(["a"] * 12 + ["b"] * 12)
+    epochs = np.tile(np.arange(12), 2)
+    model = WindowBiLSTM(feature_count=3, window_size=3, hidden_size=4, batch_size=4)
+
+    model.fit(X, labels, records, epochs, epochs=1, patience=1)
+    prediction = model.predict(X, records, epochs)
+
+    assert np.all(prediction[[0, 11, 12, 23]] == -1)
+    assert np.all(prediction[1:11] >= 0)

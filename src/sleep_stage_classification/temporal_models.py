@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import copy
+
 import numpy as np
 
 from .config import PipelineConfig
@@ -86,7 +88,13 @@ class TorchLinearChainCRF:
 class WindowBiLSTM:
     """BiLSTM that predicts the centre label of an odd-length epoch window."""
 
-    def __init__(self, feature_count: int, window_size: int = 11, hidden_size: int = 32):
+    def __init__(
+        self,
+        feature_count: int,
+        window_size: int = 11,
+        hidden_size: int = 32,
+        batch_size: int = 256,
+    ):
         if window_size < 3 or window_size % 2 == 0:
             raise ValueError("window_size must be an odd value of at least 3.")
         import torch
@@ -94,8 +102,11 @@ class WindowBiLSTM:
         self.torch = torch
         torch.manual_seed(PipelineConfig().random_state)
         self.window_size = window_size
-        self.encoder = torch.nn.LSTM(feature_count, hidden_size, batch_first=True, bidirectional=True)
-        self.head = torch.nn.Linear(hidden_size * 2, 5)
+        self.batch_size = batch_size
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.device_name_ = str(self.device)
+        self.encoder = torch.nn.LSTM(feature_count, hidden_size, batch_first=True, bidirectional=True).to(self.device)
+        self.head = torch.nn.Linear(hidden_size * 2, 5).to(self.device)
 
     def _windows(self, X, labels, record_ids, epoch_indices):
         radius = self.window_size // 2
@@ -125,28 +136,43 @@ class WindowBiLSTM:
         train_idx, validation_idx = next(split.split(windows, targets, window_groups))
         counts = np.bincount(targets[train_idx], minlength=5)
         weights = counts.sum() / np.maximum(counts, 1)
-        criterion = torch.nn.CrossEntropyLoss(weight=torch.tensor(weights, dtype=torch.float32))
+        criterion = torch.nn.CrossEntropyLoss(weight=torch.tensor(weights, dtype=torch.float32, device=self.device))
         optimizer = torch.optim.Adam([*self.encoder.parameters(), *self.head.parameters()], lr=0.001)
         best_state, best_score, remaining = None, -1.0, patience
         for _ in range(epochs):
-            self.encoder.train(); self.head.train(); optimizer.zero_grad()
-            output, _ = self.encoder(torch.tensor(windows[train_idx]))
-            loss = criterion(self.head(output[:, self.window_size // 2]), torch.tensor(targets[train_idx]))
-            loss.backward(); optimizer.step()
+            self.encoder.train()
+            self.head.train()
+            order = np.random.default_rng(PipelineConfig().random_state + _).permutation(train_idx)
+            for start in range(0, len(order), self.batch_size):
+                batch_idx = order[start : start + self.batch_size]
+                inputs = torch.as_tensor(windows[batch_idx], dtype=torch.float32, device=self.device)
+                labels = torch.as_tensor(targets[batch_idx], dtype=torch.long, device=self.device)
+                optimizer.zero_grad()
+                output, _ = self.encoder(inputs)
+                loss = criterion(self.head(output[:, self.window_size // 2]), labels)
+                loss.backward()
+                optimizer.step()
             self.encoder.eval(); self.head.eval()
+            valid_predictions = []
             with torch.no_grad():
-                valid_output, _ = self.encoder(torch.tensor(windows[validation_idx]))
-                prediction = self.head(valid_output[:, self.window_size // 2]).argmax(dim=1).numpy()
+                for start in range(0, len(validation_idx), self.batch_size):
+                    batch_idx = validation_idx[start : start + self.batch_size]
+                    inputs = torch.as_tensor(windows[batch_idx], dtype=torch.float32, device=self.device)
+                    valid_output, _ = self.encoder(inputs)
+                    valid_predictions.append(
+                        self.head(valid_output[:, self.window_size // 2]).argmax(dim=1).cpu().numpy()
+                    )
+            prediction = np.concatenate(valid_predictions)
             score = f1_score(targets[validation_idx], prediction, average="macro", zero_division=0)
             if score > best_score:
                 best_score, remaining = score, patience
-                best_state = ([item.detach().clone() for item in self.encoder.parameters()], [item.detach().clone() for item in self.head.parameters()])
+                best_state = (copy.deepcopy(self.encoder.state_dict()), copy.deepcopy(self.head.state_dict()))
             else:
                 remaining -= 1
                 if remaining == 0:
                     break
-        for parameter, value in zip(self.encoder.parameters(), best_state[0]): parameter.data.copy_(value)
-        for parameter, value in zip(self.head.parameters(), best_state[1]): parameter.data.copy_(value)
+        self.encoder.load_state_dict(best_state[0])
+        self.head.load_state_dict(best_state[1])
         self.validation_macro_f1_ = best_score
         return self
 
@@ -157,7 +183,11 @@ class WindowBiLSTM:
         windows, _, positions = self._windows(normalized, dummy, record_ids, epoch_indices)
         output = np.full(len(normalized), -1, dtype=int)
         self.encoder.eval(); self.head.eval()
+        predictions = []
         with torch.no_grad():
-            values, _ = self.encoder(torch.tensor(windows))
-            output[positions] = self.head(values[:, self.window_size // 2]).argmax(dim=1).numpy()
+            for start in range(0, len(windows), self.batch_size):
+                inputs = torch.as_tensor(windows[start : start + self.batch_size], dtype=torch.float32, device=self.device)
+                values, _ = self.encoder(inputs)
+                predictions.append(self.head(values[:, self.window_size // 2]).argmax(dim=1).cpu().numpy())
+        output[positions] = np.concatenate(predictions)
         return output
