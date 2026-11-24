@@ -45,6 +45,19 @@ python -m sleep_stage_classification.cli extract-sleep-edf `
 
 Increase `--max-records` gradually: 5, then 20, then 50, then the full dataset.
 
+The current feature protocol supersedes the earlier 99-feature experiment. It
+uses Welch PSD for delta, theta, alpha, sigma, beta, and gamma absolute/relative
+power, spectral entropy and band ratios, complete time-domain and Hjorth
+features, EEG-only permutation entropy, and EOG/EMG TKEO statistics. This gives
+116 raw features for the standard four-channel record before selecting 67.
+Re-extract the full dataset after updating the feature code so the new columns
+are available:
+
+```powershell
+python -m sleep_stage_classification.cli extract-sleep-edf `
+  --output data/processed/sleep_edf_features_full_116.csv
+```
+
 Prepare a CSV where each row is one 30-second epoch. Required columns:
 
 - `subject_id`
@@ -91,6 +104,85 @@ and macro-F1 permutation importance in five stratified folds on the training
 partition only. It rewards features that rank consistently across folds,
 applies the configured EEG/EOG/EMG weights (0.5/0.3/0.2), and removes features
 correlated above 0.9 before retaining up to 67 features.
+
+## Tune LightGBM
+
+Tune before the final model run. The command keeps every subject entirely in a
+training or validation fold and selects the candidate with the best mean macro
+F1. It can take considerable time on the complete dataset because feature
+selection is repeated inside each fold.
+
+```powershell
+python -m sleep_stage_classification.cli tune-lightgbm `
+  --features data/processed/sleep_edf_features_full_116.csv `
+  --output outputs/lightgbm_tuning_116.json `
+  --cv-folds 3 `
+  --sampler smote-rus `
+  --feature-selection ensemble `
+  --select-k 67
+```
+
+Use the tuning file directly in the final training command. This avoids
+PowerShell quoting problems with JSON parameters:
+
+```powershell
+python -m sleep_stage_classification.cli train `
+  --features data/processed/sleep_edf_features_full_116.csv `
+  --model-out models/lightgbm_smote_rus_full_116.joblib `
+  --metrics-out outputs/metrics_lightgbm_smote_rus_full_116.json `
+  --classifier lightgbm `
+  --sampler smote-rus `
+  --feature-selection ensemble `
+  --select-k 67 `
+  --lightgbm-params-file outputs/lightgbm_tuning_116.json
+```
+
+## Baseline Benchmark And Modality Ablation
+
+Run the four requested baseline conditions on one fixed, stratified
+subject-level holdout: LightGBM with class weights, LightGBM with SMOTE-RUS,
+ExtraTrees with class weights, and ExtraTrees with SMOTE-RUS. The same command
+also writes EEG-only, EOG-only, EMG-only, and all-modalities ablation results.
+
+```powershell
+python -m sleep_stage_classification.cli benchmark `
+  --features data/processed/sleep_edf_features_full_116.csv `
+  --output-dir outputs/benchmark_116 `
+  --lightgbm-params-file outputs/lightgbm_tuning_116.json `
+  --feature-selection ensemble `
+  --select-k 67
+```
+
+This produces `baseline_benchmark.csv`, `baseline_benchmark_per_class.csv`,
+one confusion-matrix CSV per condition, `modality_ablation.csv`, and
+`best_all_modalities_model.joblib`. The saved model was fitted only on the
+training subjects; the held-out subjects remain reserved for final reporting.
+
+## Temporal Model Benchmark
+
+The temporal benchmark keeps one final set of subjects unseen. It first makes
+subject-wise out-of-fold baseline probabilities for the training subjects,
+then trains the temporal models from those probabilities. It compares the
+epoch-independent baseline with a tuned HMM/Viterbi decoder, a linear-chain
+CRF, and a class-weighted window BiLSTM. Sequence boundaries are never joined
+across recordings, and the headline N1 F1 values are written per model.
+
+```powershell
+python -m sleep_stage_classification.cli temporal-benchmark `
+  --features data/processed/sleep_edf_features_full_116.csv `
+  --output-dir outputs/temporal_benchmark_116 `
+  --lightgbm-params-file outputs/lightgbm_tuning_116.json `
+  --feature-selection ensemble `
+  --select-k 67 `
+  --oof-folds 3 `
+  --lstm-window 11 `
+  --lstm-epochs 15
+```
+
+Read `temporal_comparison_overall.csv` for accuracy, macro F1, and Cohen's
+Kappa. Read `temporal_comparison_per_class.csv` and filter `stage = N1` for
+the main temporal-model result. `temporal_summary.json` preserves the selected
+features, tuned HMM transition weight, and BiLSTM validation macro F1.
 
 Generate per-epoch TreeSHAP explanations for a trained model:
 
@@ -144,6 +236,7 @@ src/sleep_stage_classification/
   features.py        Epoch feature engineering
   models.py          Baseline classifier training/evaluation
   temporal.py        Viterbi/HMM-style temporal smoothing
+  temporal_models.py Linear-chain CRF and window BiLSTM temporal learners
   explainability.py  SHAP/permutation-style attribution helpers
   reporting.py       Evidence-grounded sleep report generation
   evaluation.py      Metrics and comparison utilities

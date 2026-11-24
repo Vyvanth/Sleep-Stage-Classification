@@ -31,6 +31,7 @@ DEFAULT_BANDS = {
     "alpha": (8.0, 12.0),
     "sigma": (12.0, 16.0),
     "beta": (16.0, 30.0),
+    "gamma": (30.0, 45.0),
 }
 
 DEFAULT_MODALITY_WEIGHTS = {"EEG": 0.5, "EOG": 0.3, "EMG": 0.2}

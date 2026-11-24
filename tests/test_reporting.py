@@ -20,5 +20,7 @@ def test_report_uses_attribution_evidence():
         ]
     )
     report = generate_grounded_report(predictions, attributions)
-    assert "Sleep Stage Classification Report" in report
+    assert "AUTOMATED SLEEP STAGE ANALYSIS" in report
+    assert "SLEEP CONTINUITY" in report
+    assert "LIMITATIONS AND REQUIRED REVIEW" in report
     assert "EEG_delta_power" in report

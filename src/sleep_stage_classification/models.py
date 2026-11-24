@@ -12,18 +12,98 @@ from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.ensemble import ExtraTreesClassifier, RandomForestClassifier
 from sklearn.feature_selection import mutual_info_classif
 from sklearn.inspection import permutation_importance
+from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score, cohen_kappa_score, f1_score
-from sklearn.model_selection import GroupShuffleSplit, StratifiedKFold, train_test_split
+from sklearn.model_selection import GroupKFold, GroupShuffleSplit, StratifiedGroupKFold, StratifiedKFold, train_test_split
 from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import LabelEncoder, StandardScaler
+from sklearn.preprocessing import StandardScaler
 
-from .config import DEFAULT_MODALITY_WEIGHTS
+from .config import DEFAULT_MODALITY_WEIGHTS, ID_TO_STAGE, STAGE_ORDER, STAGE_TO_ID
+from .features import add_sequential_context
+
+
+class StageEncoder:
+    """Encode sleep stages using the fixed project-wide W/N1/N2/N3/REM IDs."""
+
+    classes_ = np.asarray(STAGE_ORDER, dtype=object)
+
+    def fit(self, y):
+        self._validate(y)
+        return self
+
+    def fit_transform(self, y) -> np.ndarray:
+        return self.fit(y).transform(y)
+
+    def transform(self, y) -> np.ndarray:
+        self._validate(y)
+        return np.asarray([STAGE_TO_ID[str(stage)] for stage in y], dtype=int)
+
+    def inverse_transform(self, ids) -> np.ndarray:
+        ids = np.asarray(ids, dtype=int)
+        if np.any((ids < 0) | (ids >= len(STAGE_ORDER))):
+            raise ValueError("Sleep stage IDs must be between 0 and 4.")
+        return np.asarray([ID_TO_STAGE[int(stage_id)] for stage_id in ids], dtype=object)
+
+    @staticmethod
+    def _validate(stages) -> None:
+        unknown = sorted({str(stage) for stage in stages} - set(STAGE_TO_ID))
+        if unknown:
+            raise ValueError(f"Unknown sleep stages: {unknown}")
+
+
+class ProbabilityCalibrator:
+    """Multiclass probability calibrator trained from baseline OOF predictions only."""
+
+    def __init__(self, n_states: int = len(STAGE_ORDER), C: float = 1.0):
+        self.n_states = n_states
+        self.model = LogisticRegression(C=C, max_iter=1_000, solver="lbfgs", random_state=103)
+
+    @staticmethod
+    def _features(probabilities: np.ndarray) -> np.ndarray:
+        probabilities = np.asarray(probabilities, dtype=float)
+        if probabilities.ndim != 2:
+            raise ValueError("Probabilities must have shape (samples, classes).")
+        return np.log(np.clip(probabilities, 1e-8, 1.0))
+
+    def fit(self, probabilities: np.ndarray, labels: np.ndarray):
+        self.model.fit(self._features(probabilities), np.asarray(labels, dtype=int))
+        return self
+
+    def transform(self, probabilities: np.ndarray) -> np.ndarray:
+        values = self.model.predict_proba(self._features(probabilities))
+        output = np.full((len(probabilities), self.n_states), 1e-8, dtype=float)
+        output[:, self.model.classes_] = values
+        return output / output.sum(axis=1, keepdims=True)
+
+
+def cross_fitted_calibrated_probabilities(
+    probabilities: np.ndarray,
+    labels: np.ndarray,
+    groups: pd.Series | np.ndarray,
+    cv_folds: int = 3,
+) -> np.ndarray:
+    """Produce calibrated OOF scores without fitting calibration on scored subjects."""
+
+    probabilities = np.asarray(probabilities, dtype=float)
+    labels = np.asarray(labels, dtype=int)
+    group_values = np.asarray(groups)
+    folds = min(cv_folds, pd.Series(group_values).nunique())
+    if folds < 2:
+        raise ValueError("Cross-fitted calibration requires at least two subjects.")
+    calibrated = np.zeros_like(probabilities)
+    splitter = GroupKFold(n_splits=folds)
+    for train_idx, validation_idx in splitter.split(probabilities, labels, group_values):
+        calibrator = ProbabilityCalibrator(n_states=probabilities.shape[1]).fit(
+            probabilities[train_idx], labels[train_idx]
+        )
+        calibrated[validation_idx] = calibrator.transform(probabilities[validation_idx])
+    return calibrated
 
 
 @dataclass
 class TrainingResult:
     model: Pipeline
-    label_encoder: LabelEncoder
+    label_encoder: StageEncoder
     feature_names: list[str]
     metrics: dict[str, float]
     split_strategy: str
@@ -33,6 +113,16 @@ class TrainingResult:
     sampler_name: str
     feature_selection_name: str
     selected_feature_names: list[str]
+    context_lags: int = 0
+
+
+@dataclass
+class TuningResult:
+    """Cross-validated parameter search results for LightGBM."""
+
+    best_params: dict[str, float | int]
+    candidates: list[dict[str, object]]
+    cv_folds: int
 
 
 class EnsembleFeatureSelector(BaseEstimator, TransformerMixin):
@@ -59,24 +149,33 @@ class EnsembleFeatureSelector(BaseEstimator, TransformerMixin):
         self.permutation_repeats = permutation_repeats
         self.random_state = random_state
 
-    def fit(self, X, y):
+    def fit(self, X, y, groups=None):
         X_frame = pd.DataFrame(X).copy()
         self.feature_names_in_ = np.asarray(X_frame.columns, dtype=object)
         if X_frame.shape[1] == 0:
             raise ValueError("Feature selection requires at least one feature.")
         y_array = np.asarray(y)
-        min_class_count = int(pd.Series(y_array).value_counts().min())
-        folds = min(self.n_splits, min_class_count)
-        if folds < 2:
-            raise ValueError("Ensemble feature selection requires at least two samples in each class.")
-
-        splitter = StratifiedKFold(n_splits=folds, shuffle=True, random_state=self.random_state)
+        group_array = np.asarray(groups) if groups is not None else None
+        unique_groups = pd.Series(group_array).nunique() if group_array is not None else 0
+        if unique_groups >= 2:
+            folds = min(self.n_splits, unique_groups)
+            splitter = GroupKFold(n_splits=folds)
+            split_iterator = splitter.split(X_frame, y_array, group_array)
+            self.cv_strategy_ = "subject_group_kfold"
+        else:
+            min_class_count = int(pd.Series(y_array).value_counts().min())
+            folds = min(self.n_splits, min_class_count)
+            if folds < 2:
+                raise ValueError("Ensemble feature selection requires at least two samples in each class.")
+            splitter = StratifiedKFold(n_splits=folds, shuffle=True, random_state=self.random_state)
+            split_iterator = splitter.split(X_frame, y_array)
+            self.cv_strategy_ = "stratified_epoch_kfold"
         aggregate_scores = np.zeros(X_frame.shape[1], dtype=float)
         stable_top_counts = np.zeros(X_frame.shape[1], dtype=float)
         # The paper retains the top 80 of 99 candidates before redundancy
         # filtering. Scale that proportion for smaller feature sets.
         fold_top_k = min(self.preselect_k, max(1, round(X_frame.shape[1] * 80 / 99)))
-        for fold_index, (train_idx, validation_idx) in enumerate(splitter.split(X_frame, y_array)):
+        for fold_index, (train_idx, validation_idx) in enumerate(split_iterator):
             train_X = X_frame.iloc[train_idx]
             validation_X = X_frame.iloc[validation_idx]
             train_y = y_array[train_idx]
@@ -179,33 +278,46 @@ class EnsembleFeatureSelector(BaseEstimator, TransformerMixin):
         return support
 
 
-def make_baseline_classifier(classifier: str = "auto", random_state: int = 103):
+def make_baseline_classifier(
+    classifier: str = "auto",
+    random_state: int = 103,
+    lightgbm_params: dict[str, float | int] | None = None,
+):
     """Create the requested tabular classifier."""
 
     if classifier in {"auto", "lightgbm"}:
         try:
             from lightgbm import LGBMClassifier
 
-            return (
-                LGBMClassifier(
-                    objective="multiclass",
-                    n_estimators=300,
-                    learning_rate=0.04,
-                    num_leaves=31,
-                    subsample=0.9,
-                    colsample_bytree=0.9,
-                    class_weight="balanced",
-                    random_state=random_state,
-                    verbosity=-1,
-                ),
-                "lightgbm",
-            )
+            params = {
+                "objective": "multiclass",
+                "n_estimators": 300,
+                "learning_rate": 0.04,
+                "num_leaves": 31,
+                "subsample": 0.9,
+                "colsample_bytree": 0.9,
+                "class_weight": "balanced",
+                "random_state": random_state,
+                "verbosity": -1,
+            }
+            params.update(lightgbm_params or {})
+            return LGBMClassifier(**params), "lightgbm"
         except ImportError:
             if classifier == "lightgbm":
                 raise ImportError("LightGBM is not installed. Run: pip install lightgbm")
 
+    if classifier == "extra_trees":
+        return (
+            ExtraTreesClassifier(
+                n_estimators=350,
+                class_weight="balanced",
+                random_state=random_state,
+                n_jobs=1,
+            ),
+            "extra_trees",
+        )
     if classifier not in {"auto", "random_forest"}:
-        raise ValueError("classifier must be one of: auto, lightgbm, random_forest")
+        raise ValueError("classifier must be one of: auto, lightgbm, extra_trees, random_forest")
     return (
         RandomForestClassifier(
             n_estimators=250,
@@ -235,10 +347,15 @@ def make_pipeline(
     feature_selection: str = "ensemble",
     select_k: int = 67,
     random_state: int = 103,
+    lightgbm_params: dict[str, float | int] | None = None,
 ):
     """Create a training pipeline with optional imbalance handling."""
 
-    estimator, classifier_name = make_baseline_classifier(classifier=classifier, random_state=random_state)
+    estimator, classifier_name = make_baseline_classifier(
+        classifier=classifier,
+        random_state=random_state,
+        lightgbm_params=lightgbm_params,
+    )
     selector, selector_name = make_feature_selector(feature_selection, select_k, random_state)
     if sampler == "none":
         steps = []
@@ -269,6 +386,28 @@ def make_pipeline(
     raise ValueError("sampler must be one of: none, smote-rus")
 
 
+def subject_holdout_split(
+    y: pd.Series,
+    groups: pd.Series | np.ndarray,
+    random_state: int = 103,
+) -> tuple[np.ndarray, np.ndarray, str]:
+    """Create the project's deterministic subject-level final holdout split."""
+
+    encoder = StageEncoder()
+    y_encoded = encoder.fit_transform(y)
+    group_values = np.asarray(groups)
+    unique_groups = pd.Series(group_values).nunique()
+    if unique_groups >= 4:
+        splitter = StratifiedGroupKFold(n_splits=4, shuffle=True, random_state=random_state)
+        train_idx, test_idx = next(splitter.split(np.zeros(len(y_encoded)), y_encoded, group_values))
+        return train_idx, test_idx, "stratified_subject_group_holdout"
+    if unique_groups >= 2:
+        splitter = GroupShuffleSplit(n_splits=1, test_size=0.25, random_state=random_state)
+        train_idx, test_idx = next(splitter.split(np.zeros(len(y_encoded)), y_encoded, group_values))
+        return train_idx, test_idx, "subject_group_holdout"
+    raise ValueError("Need at least two subjects for a subject-wise holdout split.")
+
+
 def train_baseline(
     X: pd.DataFrame,
     y: pd.Series,
@@ -278,19 +417,40 @@ def train_baseline(
     feature_selection: str = "ensemble",
     select_k: int = 67,
     random_state: int = 103,
+    lightgbm_params: dict[str, float | int] | None = None,
+    feature_columns: list[str] | None = None,
+    context_lags: int = 0,
+    metadata: pd.DataFrame | None = None,
+    train_indices: np.ndarray | None = None,
+    test_indices: np.ndarray | None = None,
 ) -> TrainingResult:
     """Train an epoch-independent baseline and evaluate a held-out split."""
 
-    label_encoder = LabelEncoder()
+    if feature_columns is not None:
+        missing = sorted(set(feature_columns) - set(X.columns))
+        if missing:
+            raise ValueError(f"Requested feature columns are unavailable: {missing[:5]}")
+        X = X[feature_columns].copy()
+    if context_lags > 0:
+        if metadata is None:
+            raise ValueError("Sequential context features require aligned record metadata.")
+        X = add_sequential_context(X, metadata, lags=context_lags)
+    label_encoder = StageEncoder()
     y_encoded = label_encoder.fit_transform(y)
     if groups is None:
         groups = pd.Series(np.arange(len(y)), index=y.index)
     unique_groups = pd.Series(groups).nunique()
     class_counts = pd.Series(y_encoded).value_counts()
-    if unique_groups >= 2:
-        splitter = GroupShuffleSplit(n_splits=1, test_size=0.25, random_state=random_state)
-        train_idx, test_idx = next(splitter.split(X, y_encoded, groups))
-        split_strategy = "subject_group_holdout"
+    if (train_indices is None) != (test_indices is None):
+        raise ValueError("Provide both train_indices and test_indices, or neither.")
+    if train_indices is not None:
+        train_idx = np.asarray(train_indices, dtype=int)
+        test_idx = np.asarray(test_indices, dtype=int)
+        if set(train_idx) & set(test_idx):
+            raise ValueError("Training and test indices must not overlap.")
+        split_strategy = "provided_subject_group_holdout"
+    elif unique_groups >= 2:
+        train_idx, test_idx, split_strategy = subject_holdout_split(y, groups, random_state=random_state)
     elif class_counts.min() >= 2:
         indices = np.arange(len(y_encoded))
         train_idx, test_idx = train_test_split(
@@ -308,8 +468,12 @@ def train_baseline(
         feature_selection=feature_selection,
         select_k=select_k,
         random_state=random_state,
+        lightgbm_params=lightgbm_params,
     )
-    pipeline.fit(X.iloc[train_idx], y_encoded[train_idx])
+    fit_params = {}
+    if "select" in pipeline.named_steps:
+        fit_params["select__groups"] = np.asarray(groups)[train_idx]
+    pipeline.fit(X.iloc[train_idx], y_encoded[train_idx], **fit_params)
     pred = pipeline.predict(X.iloc[test_idx])
     metrics = classification_metrics(y_encoded[test_idx], pred)
     selector = pipeline.named_steps.get("select")
@@ -326,7 +490,119 @@ def train_baseline(
         sampler_name,
         selector_name,
         selected_feature_names,
+        context_lags,
     )
+
+
+def modality_feature_columns(X: pd.DataFrame, modality: str) -> list[str]:
+    """Return feature columns belonging to one PSG modality or all modalities."""
+
+    if modality == "all":
+        return list(X.columns)
+    prefix = f"{modality.upper()}_"
+    columns = [column for column in X.columns if column.upper().startswith(prefix)]
+    if not columns:
+        raise ValueError(f"No {modality.upper()} feature columns were found.")
+    return columns
+
+
+def oof_probabilities(
+    X: pd.DataFrame,
+    y: pd.Series,
+    groups: pd.Series,
+    classifier: str = "lightgbm",
+    sampler: str = "smote-rus",
+    feature_selection: str = "ensemble",
+    select_k: int = 67,
+    lightgbm_params: dict[str, float | int] | None = None,
+    cv_folds: int = 3,
+) -> np.ndarray:
+    """Create subject-wise out-of-fold baseline probabilities for temporal tuning."""
+
+    encoder = StageEncoder()
+    encoded_y = encoder.fit_transform(y)
+    group_values = np.asarray(groups)
+    folds = min(cv_folds, pd.Series(group_values).nunique())
+    if folds < 2:
+        raise ValueError("OOF probabilities require at least two subjects.")
+    probabilities = np.zeros((len(X), len(STAGE_ORDER)), dtype=float)
+    splitter = GroupKFold(n_splits=folds)
+    for train_idx, validation_idx in splitter.split(X, encoded_y, group_values):
+        pipeline, _, _, _ = make_pipeline(
+            classifier=classifier, sampler=sampler, feature_selection=feature_selection,
+            select_k=select_k, lightgbm_params=lightgbm_params,
+        )
+        fit_params = {"select__groups": group_values[train_idx]} if "select" in pipeline.named_steps else {}
+        pipeline.fit(X.iloc[train_idx], encoded_y[train_idx], **fit_params)
+        probabilities[validation_idx] = pipeline.predict_proba(X.iloc[validation_idx])
+    return probabilities
+
+
+def lightgbm_candidate_params() -> list[dict[str, float | int]]:
+    """Return a small, CPU-friendly candidate grid for subject-wise tuning."""
+
+    return [
+        {"n_estimators": 300, "learning_rate": 0.04, "num_leaves": 31, "min_child_samples": 20, "reg_lambda": 0.0},
+        {"n_estimators": 450, "learning_rate": 0.03, "num_leaves": 31, "min_child_samples": 30, "reg_lambda": 0.5},
+        {"n_estimators": 350, "learning_rate": 0.04, "num_leaves": 15, "min_child_samples": 20, "reg_lambda": 1.0},
+        {"n_estimators": 500, "learning_rate": 0.025, "num_leaves": 63, "min_child_samples": 30, "reg_lambda": 1.0},
+    ]
+
+
+def tune_lightgbm(
+    X: pd.DataFrame,
+    y: pd.Series,
+    groups: pd.Series,
+    sampler: str = "smote-rus",
+    feature_selection: str = "ensemble",
+    select_k: int = 67,
+    cv_folds: int = 3,
+    random_state: int = 103,
+    candidates: list[dict[str, float | int]] | None = None,
+    metadata: pd.DataFrame | None = None,
+    context_lags: int = 0,
+) -> TuningResult:
+    """Rank LightGBM settings by macro-F1 using subject-wise cross-validation."""
+
+    unique_groups = pd.Series(groups).nunique()
+    folds = min(cv_folds, unique_groups)
+    if folds < 2:
+        raise ValueError("LightGBM tuning requires features from at least two subjects.")
+    label_encoder = StageEncoder()
+    y_encoded = label_encoder.fit_transform(y)
+    if context_lags > 0:
+        if metadata is None:
+            raise ValueError("Sequential context features require aligned record metadata.")
+        X = add_sequential_context(X, metadata, lags=context_lags)
+    splitter = GroupKFold(n_splits=folds)
+    results: list[dict[str, object]] = []
+    for candidate in candidates or lightgbm_candidate_params():
+        fold_metrics: list[dict[str, float]] = []
+        for train_idx, validation_idx in splitter.split(X, y_encoded, groups):
+            pipeline, _, _, _ = make_pipeline(
+                classifier="lightgbm",
+                sampler=sampler,
+                feature_selection=feature_selection,
+                select_k=select_k,
+                random_state=random_state,
+                lightgbm_params=candidate,
+            )
+            fit_params = {}
+            if "select" in pipeline.named_steps:
+                fit_params["select__groups"] = np.asarray(groups)[train_idx]
+            pipeline.fit(X.iloc[train_idx], y_encoded[train_idx], **fit_params)
+            fold_metrics.append(classification_metrics(y_encoded[validation_idx], pipeline.predict(X.iloc[validation_idx])))
+        results.append(
+            {
+                "params": candidate,
+                "mean_macro_f1": float(np.mean([item["macro_f1"] for item in fold_metrics])),
+                "mean_accuracy": float(np.mean([item["accuracy"] for item in fold_metrics])),
+                "mean_cohen_kappa": float(np.mean([item["cohen_kappa"] for item in fold_metrics])),
+                "folds": fold_metrics,
+            }
+        )
+    ranked = sorted(results, key=lambda item: (item["mean_macro_f1"], item["mean_accuracy"]), reverse=True)
+    return TuningResult(best_params=dict(ranked[0]["params"]), candidates=ranked, cv_folds=folds)
 
 
 def classification_metrics(y_true: np.ndarray, y_pred: np.ndarray) -> dict[str, float]:

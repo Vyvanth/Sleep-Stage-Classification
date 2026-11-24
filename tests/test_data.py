@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from sleep_stage_classification.data import discover_sleep_edf_pairs, sleep_edf_pair_key, trim_outer_wake_epochs
+from sleep_stage_classification.data import _require_requested_channels, discover_sleep_edf_pairs, sleep_edf_pair_key, trim_outer_wake_epochs
 
 
 def test_sleep_edf_pair_key_uses_first_six_characters():
@@ -28,3 +28,16 @@ def test_trim_outer_wake_epochs_keeps_sleep_window_margin():
     trimmed = trim_outer_wake_epochs(frame, keep_minutes=1, epoch_seconds=30)
     assert trimmed["stage"].tolist() == ["W", "W", "N2", "N2", "W", "W"]
     assert trimmed["epoch_index"].tolist() == list(range(6))
+
+
+def test_required_channel_check_rejects_incomplete_modalities():
+    try:
+        _require_requested_channels(
+            ["EEG Fpz-Cz", "EEG Pz-Oz", "EOG horizontal"],
+            ["EEG Fpz-Cz", "EEG Pz-Oz", "EOG horizontal", "EMG submental"],
+            Path("SC4001E0-PSG.edf"),
+        )
+    except ValueError as exc:
+        assert "missing 1 required PSG channel" in str(exc)
+    else:
+        raise AssertionError("Expected incomplete multimodal record to be rejected.")

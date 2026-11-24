@@ -1,0 +1,485 @@
+P0: Temporally-Aware, Explainable Multimodal Sleep Stage Classification with LLM-Generated Reports
+P1: A PROJECT REPORT
+P2: Submitted by
+P3:       BL.EN.U4AID23019	        Joshika Somisetty
+P4:       BL.EN.U4AID23037	        Padarthi Leela Sabareesh
+P5:       BL.EN.U4AID23056		Vobilisetti Vyvanth 
+P6: in partial fulfillment for the award of the degree of
+P7: BACHELOR OF TECHNOLOGY
+P8: IN
+P9: ARTIFICIAL INTELLIGENCE AND DATA SCIENCE
+P11: AMRITA SCHOOL OF ARTIFICIAL INTELLIGENCE, BENGALURU
+P12:  AMRITA VISHWA VIDYAPEETHAM
+P13: BENGALURU 560 035
+P14: DECEMBER 2026
+P15: ACKNOWLEDGEMENTS
+P16: The satisfaction that accompanies successful completion of any task would be incomplete without mention of people who made it possible, and whose constant encouragement and guidance have been source of inspiration throughout the course of this project work.
+P17: We offer our sincere pranams at the lotus feet of “AMMA”, MATA AMRITANANDAMAYI  DEVI who showered her blessing upon us throughout the course of this project work.
+P18: We owe our gratitude to Prof. Manoj P., Director, Amrita Vishwa Vidyapeetham Bengaluru Campus. We would like to place our heartfelt gratitude to Dr. Gopalakrishnan E.A., Principal, Amrita School of Computing and Amrita School of Artificial Intelligence, Bengaluru for his valuable support and inspiration.
+P19: 	It is a great pleasure to express our gratitude and indebtedness to our project guide Dr. Sreevidya B. , Assistant Professor, Department of Computer Science and Engineering, Amrita School of Computing, Bengaluru for her/his valuable guidance, encouragement, moral support, and affection throughout the project work.
+P20: 	We would like to thank express our gratitude to project panel members for their suggestions, encouragement, and moral support during the process of project work and all faculty members for their academic support. Finally, we are forever grateful to our parents, who have loved, supported, and encouraged us in all our endeavors.
+P25: ABSTRACT
+P26: Manual scoring of whole-night polysomnography (PSG) is slow, costly and subjective, and automated systems that classify each 30-second epoch independently ignore the sequential structure of sleep. This report presents a temporally aware, multimodal sleep stage classification framework. Using the Sleep-EDF Expanded dataset, the system preprocesses EEG, EOG and EMG signals with wavelet denoising, per-subject normalisation, wake trimming and 30-second epoching; extracts 116 time-domain, frequency-domain, Hjorth, permutation entropy and TKEO features; and selects 67 of them with an ensemble method that combines LightGBM importance, mutual information and permutation importance with stability scoring, modality weighting and correlation filtering. Baseline LightGBM and ExtraTrees classifiers are trained with SMOTE and undersampling under a leakage-free subject-wise protocol, and a temporal layer (HMM with Viterbi decoding, linear-chain CRF and window BiLSTM) exploits the sequence of epochs. In preliminary results, HMM/Viterbi improves the baseline from 0.696 to 0.724 macro F1 and from 0.426 to 0.439 N1 F1, while N1 remains the main challenge.
+P28: TABLE OF CONTENTS
+P29: ACKNOWLEDGEMENTS	i
+P30: ABSTRACT	ii
+P31: LIST OF FIGURES	v
+P32: LIST OF TABLES	vi
+P33: CHAPTER 1 – INTRODUCTION	1
+P34: 1.1 Introduction to Sleep and Sleep Staging	1
+P35: 1.2 Motivation	2
+P36: 1.3 Problem Statement	4
+P37: 1.4 Objectives	4
+P38: 1.5 Organisation of the Report	4
+P39: CHAPTER 2 – LITERATURE REVIEW	5
+P40: 2.1 Manual Scoring Standards	5
+P41: 2.2 Feature-Based Machine Learning Approaches	5
+P42: 2.3 Deep Learning Approaches	6
+P43: 2.4 Temporal Context in Sleep Staging	6
+P44: 2.5 Explainability in Sleep Staging	7
+P45: 2.6 Cross-Dataset Generalisation	7
+P46: 2.7 Large Language Models for Clinical Reporting	8
+P47: 2.8 Research Gap	8
+P48: CHAPTER 3 – SYSTEM SPECIFICATIONS	9
+P49: 3.1 Software Requirements	9
+P50: CHAPTER 4 – SYSTEM DESIGN	10
+P51: 4.1 High-Level Design	10
+P52: 4.2 Low-Level Design	12
+P53: CHAPTER 5 – SYSTEM IMPLEMENTATION	17
+P54: 5.1 Modules Used with Description	17
+P55: 5.2 Data Organisation	17
+P56: 5.3 Signal Preprocessing	18
+P57: 5.4 Feature Extraction	21
+P58: 5.5 Feature Selection	22
+P59: 5.6 Baseline Classification	23
+P60: 5.7 Temporal Modeling	25
+P61: 5.8 Evaluation Metrics	26
+P62: CHAPTER 6 – SYSTEM TESTING	27
+P63: 6.1 Testing Strategy	27
+P64: 6.2 Validation of Signal Preprocessing	27
+P65: 6.3 Validation of the Evaluation Protocol	28
+P66: 6.4 Reproducing the Reported Metrics	28
+P67: 6.5 Test Cases	29
+P68: CHAPTER 7 – RESULTS AND ANALYSIS	30
+P69: 7.1 Experimental Setup	30
+P70: 7.2 Class Distribution	30
+P71: 7.3 Baseline versus Temporal Models	31
+P72: 7.4 Confusion Matrix Analysis	33
+P73: 7.5 Per-Class Analysis	34
+P74: 7.6 Analysis of the N1 Stage	35
+P75: 7.7 Comparison with the Reference Study	36
+P76: 7.8 Modality Ablation	37
+P77: 7.9 Discussion	37
+P78: CHAPTER 8 – CONCLUSION AND FUTURE SCOPE	39
+P79: 8.1 Conclusion	39
+P80: 8.2 Future Scope	40
+P81: REFERENCES	43
+P83: List Of Figures
+P84: Figure 4.1: High-level architecture of the system.	10
+P85: Figure 4.2: Low-level design of the preprocessing module.	13
+P86: Figure 4.3: Low-level design of the feature extraction module.	14
+P87: Figure 4.4: Low-level design of the ensemble feature selection module.	15
+P88: Figure 4.5: Low-level design of the temporal modeling module, showing the three alternatives compared.	16
+P89: Figure 5.1: Wavelet denoising quality check on one 30-second epoch of recording SC4001. Grey: original signal; blue: denoised signal.	20
+P90: Figure 7.1: Number of evaluated epochs per sleep stage.	31
+P91: Figure 7.2: Accuracy, macro F1, Cohen's Kappa and N1 F1 for the baseline and the three temporal models.	32
+P92: Figure 7.3: Confusion matrices of the baseline (left) and the HMM/Viterbi model (right). Cells show epoch counts and the percentage of each true stage.	33
+P93: Figure 7.4: Per-class F1 (left) and recall (right) for the baseline and the HMM/Viterbi model.	34
+P94: Figure 7.5: N1-stage precision, recall and F1 for the baseline and the three temporal models.	35
+P96: List Of Tables
+P97: Table 1.1: AASM sleep stages and their characteristic signal patterns	2
+P98: Table 3.1: Software requirements and their roles	9
+P99: Table 5.1: Modules of the system with inputs, outputs and status	17
+P100: Table 5.2: Specification of the Sleep-EDF Expanded dataset	18
+P101: Table 5.3: Feature families extracted from each epoch	21
+P102: Table 6.1: Reported metrics compared with metrics recomputed from the confusion matrices	28
+P103: Table 6.2: Test cases for the sleep staging system	29
+P104: Table 7.1: Evaluated epochs per stage	31
+P105: Table 7.2: Overall performance of the baseline and the three temporal models	31
+P106: Table 7.3: Per-class precision, recall and F1 of the baseline and HMM/Viterbi models	34
+P107: Table 7.4: N1-stage precision, recall and F1 for all models	35
+P108: Table 7.5: Comparison with the values reported in the reference study	36
+P109: Table 7.6: Modality ablation results	37
+P110: Table 7.7: Largest misclassification flows of the baseline and the HMM/Viterbi model	38
+P112: CHAPTER - 1
+P113: INTRODUCTION
+P115: 1.1 Introduction to Sleep and Sleep Staging
+P116: Sleep is a recurring, physiologically active state that is essential for memory consolidation, metabolic regulation, immune function and emotional well-being. Disturbed or insufficient sleep is associated with a wide range of chronic physiological and psychosocial conditions, and interrupted or poor-quality sleep has been linked to many chronic physiological and psychosocial illnesses. Because sleep is not a uniform state but a structured sequence of distinct stages, assessing its quality requires more than measuring how long a person sleeps. Clinicians need to know how much time is spent in each stage, how quickly the person falls asleep, how often sleep is interrupted, and how the stages are organised across the night.
+P117: The clinical gold standard for such an assessment is polysomnography (PSG). A PSG study is an all-night recording of several physiological signals at once. The signals relevant to sleep staging are the electroencephalogram (EEG), which measures cortical brain activity; the electrooculogram (EOG), which captures eye movements; and the electromyogram (EMG), usually recorded from the chin, which measures muscle tone. Together, these three modalities carry complementary information: EEG describes the brain state, EOG reveals the rapid eye movements that characterise REM sleep, and EMG reveals the muscle atonia that accompanies REM sleep and the raised muscle tone seen during wakefulness.
+P118: Sleep staging is the task of labelling consecutive 30-second segments of a PSG recording, called epochs, with one of the sleep stages defined by a scoring standard. The older Rechtschaffen and Kales (R&K) standard has been largely replaced by the manual of the American Academy of Sleep Medicine (AASM), which defines five stages: Wake (W), three non-REM stages (N1, N2 and N3) and rapid eye movement (REM) sleep. Table 1.1 summarises the defining characteristics of each stage. The resulting sequence of stages over the night is called a hypnogram, and from it clinicians derive summary measures such as total sleep time, sleep efficiency, sleep onset latency and the percentage of the night spent in each stage.
+P119: Table 1.1: AASM sleep stages and their characteristic signal patterns
+P121: The reliability of any staging depends on how consistently these patterns are recognised. For N2 and N3 the patterns are distinctive: spindles and K-complexes mark N2, and the slow, high-amplitude waves of N3 are difficult to miss. N1, in contrast, has no single hallmark pattern. It is a brief, transitional stage in which the EEG gradually slows from the alpha rhythm of relaxed wakefulness to the theta activity of light sleep, and its features overlap with those of both Wake and N2. This difficulty of N1 is a recurring theme of this report.
+P122: 1.2 Motivation
+P123: Manual scoring of a full-night PSG recording is carried out by trained technicians or clinicians who inspect the signals epoch by epoch. A single night contains roughly one thousand 30-second epochs, and scoring them is slow, costly and tedious. It is also subjective: it is widely recognised that two experienced scorers rarely agree on every epoch, and that agreement is lowest for the transitional stage N1. This combination of workload and variability is a significant bottleneck in sleep medicine and limits access to sleep diagnostics.
+P124: Automatic sleep staging with machine learning offers a way to reduce this bottleneck, and a large body of work has been published on the subject. Recent research has increasingly favoured deep neural networks, which learn features directly from raw signals. While often accurate, these models are costly to train, and their internal reasoning is difficult for a clinician to inspect. Studies have also shown that carefully designed pipelines built on handcrafted features and conventional classifiers can match deep learning approaches while remaining transparent and cheaper to deploy. This observation motivates the feature-based approach adopted in this project.
+P125: Despite this progress, three limitations of existing automated systems motivate the present work:
+P126: •	Epoch-independent classification. Most feature-based systems classify each 30-second epoch in isolation, ignoring the fact that sleep is a continuous process in which stages occur in runs and follow typical transitions. Discarding this sequential context hurts accuracy most on ambiguous epochs, and particularly on N1.
+P127: •	Weak performance on N1. The transitional stage N1 has no single hallmark pattern, and it is the stage on which automated systems, including deep networks, most often struggle. Context from neighbouring epochs is especially valuable here, because an ambiguous N1 epoch is easier to interpret when its neighbours are known.
+P128: •	Optimistic evaluation. When epochs from the same night are split at random between training and test sets, near-identical epochs appear on both sides and the measured accuracy is inflated. Evaluation by subject is needed to estimate performance on people the model has never seen.
+P129: 1.3 Problem Statement
+P130: Existing automated sleep staging systems typically classify each 30-second epoch independently, ignoring the sequential nature of sleep, which limits accuracy on the hardest stage, N1. Their performance is also often measured with evaluation protocols that do not separate subjects, which can give optimistic estimates. The problem addressed by this project is to design and evaluate a multimodal, feature-based sleep staging pipeline that models temporal context across epochs and is evaluated under a strict subject-wise protocol that prevents data leakage.
+P131: 1.4 Objectives
+P132: The objectives of the project are:
+P133: 1.	To build a reproducible preprocessing pipeline for multimodal PSG recordings (two EEG channels, EOG and EMG) from the Sleep-EDF Expanded dataset.
+P134: 2.	To engineer a rich set of time-domain, frequency-domain and non-linear features, and to reduce them to a compact, non-redundant subset using an ensemble feature selection method.
+P135: 3.	To train and evaluate baseline classifiers with class-imbalance handling under a strict subject-wise protocol that prevents data leakage.
+P136: 4.	To add a temporal modeling layer and to measure its effect on overall performance and especially on N1-stage classification.
+P137: 1.5 Organisation of the Report
+P138: The remainder of the report is organised as follows. Chapter 2 reviews the literature on automatic sleep staging, temporal modeling, explainability and cross-dataset generalisation, and identifies the research gap. Chapter 3 lists the software requirements. Chapter 4 presents the system architecture and the high-level and low-level design of each module. Chapter 5 describes the implementation of each module in detail. Chapter 6 describes the testing and validation performed. Chapter 7 presents and analyses the results. Chapter 8 concludes the report and presents the future scope.
+P140: CHAPTER - 2
+P141: LITERATURE REVIEW
+P143: This chapter reviews prior work relevant to the project. It follows the development of automatic sleep staging from feature-based machine learning, through deep learning, to the more recent concerns of temporal context, explainability and generalisation, and it ends with a summary of the research gap that this project addresses.
+P144: 2.1 Manual Scoring Standards
+P145: Sleep staging began as a manual procedure. The R&K standard divided non-REM sleep into four stages (S1 to S4), plus wake, REM and a movement category. The AASM manual later merged stages 3 and 4 into a single slow-wave stage N3, renamed S1 and S2 to N1 and N2, and standardised the 30-second epoch, channel placement and scoring rules. The Sleep-EDF Expanded dataset used in this project was annotated according to R&K, so a label mapping to the five AASM classes is required, as described in Chapter 5. Both standards rely on a human reading signals epoch by epoch, which is the source of the time and variability problems discussed in Section 1.2.
+P146: 2.2 Feature-Based Machine Learning Approaches
+P147: Early automatic systems extracted handcrafted features from each epoch and passed them to a conventional classifier. Typical features include statistical descriptors in the time domain, band powers in the standard EEG frequency bands, Hjorth parameters and entropy measures. Satapathy et al. applied ReliefF to select the most informative features from EEG, EOG and EMG signals and then used an AdaBoost classifier, showing that multimodal signals combined with feature selection give a competitive result using a relatively simple model. Xu et al. combined multi-domain EEG and EOG features with a two-phase feature selection scheme and an XGBoost classifier, reporting an accuracy of 87.0%. Notably, their results are described as being especially significant because deep learning models had struggled on the N1 stage.
+P148: Van Der Donckt et al. made the case for this family of methods in a systematic comparison, concluding that simple and interpretable techniques can be competitive with deep learning for sleep scoring. These studies, together with interpretable feature-based pipelines in related biosignal tasks, show that a well-constructed pipeline of feature extraction, feature selection and a strong ensemble classifier can reach accuracy comparable to end-to-end networks. They also have practical advantages: they are cheap to train and deploy, they do not require very large datasets, and their inputs are meaningful physiological quantities, which makes explanation possible.
+P149: 2.3 Deep Learning Approaches
+P150: Deep learning methods have become popular because they learn features automatically from raw signals or time-frequency images. Convolutional neural networks (CNNs) have been applied to single-channel and multichannel EEG. Tsinalis et al. used stacked sparse autoencoders on time-frequency features and convolutional networks on single-channel EEG. Supratak et al. proposed DeepSleepNet, which combines a CNN for epoch-level feature learning with a bidirectional LSTM that models transitions between epochs. Recurrent networks, Transformer-based models such as SleepTransformer, and hybrids have followed. Chengfan et al. compared CNN, LSTM and CNN+LSTM models on EEG spectrograms, with the best configuration reaching 87.4% accuracy, and Jia et al. proposed GraphSleepNet, which models the spatial and temporal relationships among EEG channels as a graph.
+P151: These models often reach high accuracy, but the cost is growing model complexity: model size and computational cost have increased considerably without proportionate gains in accuracy. More importantly for clinical use, they behave as black boxes whose decisions cannot easily be traced back to signal features. That limitation is the main reason that this project follows the feature-based route.
+P152: 2.4 Temporal Context in Sleep Staging
+P153: Sleep stages occur in runs and follow typical transitions: wake is followed by N1, N1 by N2, N2 by N3 or REM, and a stage rarely lasts a single epoch. Several lines of work exploit this structure. Deep models such as DeepSleepNet and the mixed neural network of Dong et al. include recurrent layers that carry information across epochs. Cascaded LSTM models and attention-based models pursue the same idea. In the feature-based setting, temporal structure can be introduced by post-processing, for example with a hidden Markov model (HMM): the stages are treated as hidden states, the classifier output serves as the observation, and Viterbi decoding finds the most likely stage sequence.
+P154: Conditional random fields (CRFs) are a discriminative alternative to HMMs that model dependencies between neighbouring labels directly, and bidirectional LSTMs read a window of epochs in both directions. These three families — HMM/Viterbi, CRF and windowed BiLSTM — are the temporal models compared in this project.
+P155: 2.5 Explainability in Sleep Staging
+P156: Explainable AI methods attribute a prediction to the input features that influenced it. SHAP (SHapley Additive exPlanations) assigns each feature a contribution to a prediction based on cooperative game theory and has efficient exact algorithms for tree ensembles, which makes it a natural match for LightGBM-based pipelines. Within sleep staging, recent work such as SleepExplain explains NREM and REM stage classification from EEG using attribution methods, and Vilamala et al. examined what convolutional networks learn when scoring sleep. Xu et al. emphasised that interpretable features are central to an effective and interpretable staging system. Most existing studies, however, explain model behaviour on aggregate; per-epoch attributions that are carried through to a patient-level narrative are rare.
+P157: 2.6 Cross-Dataset Generalisation
+P158: A model trained on one dataset commonly loses accuracy on another, because of differences in recording hardware, electrode montage, sampling rate, scoring practice and patient population. Domain adaptation is one response: Tallal et al. proposed STDA-Net, a spectrogram-based domain adaptation method for cross-dataset sleep stage classification. Federated learning, studied by Amato on ISRUC-Sleep data, addresses heterogeneity between sites from a different angle. ISRUC-Sleep, described by Khalighi et al., is a comprehensive public dataset that includes both healthy subjects and subjects with sleep disorders, which makes it a widely used resource for studying how sleep staging generalises across populations. Per-subject normalisation, used in this project, is a simple and widely applicable step that removes much of the between-subject amplitude variability.
+P159: 2.7 Large Language Models for Clinical Reporting
+P160: Large language models can turn structured numerical data into fluent text. In the reference study, quantitative sleep metrics — total sleep time, sleep efficiency, sleep latency and stage percentages — were assembled into a structured prompt for the Gemini 1.5 Flash model, which produced a report with an overall summary, a sleep score, an analysis of sleep architecture and recommendations. The quality of the generated report was checked in two ways: a second LLM acting as a judge evaluated factual consistency against the input data, and BERTScore measured semantic similarity with a ground-truth summary. 
+P161: 2.8 Research Gap
+P162: The review shows that feature-based pipelines can match deep networks while remaining interpretable, and that temporal context is usually introduced through deep recurrent models. The pattern is visible in the studies reviewed above: many studies classify each epoch on its own, rely on black-box models, or evaluate on a single dataset. Few studies combine an interpretable multimodal feature pipeline with an explicit temporal layer whose effect on the N1 stage is measured under a strict subject-wise protocol. This project addresses that gap: it keeps the interpretable multimodal feature pipeline, adds a temporal layer aimed at the N1 stage, and evaluates the result without data leakage.
+P164: CHAPTER - 3
+P165: SYSTEM SPECIFICATIONS
+P167: This chapter lists the software required to build and evaluate the system. The project is purely software-based; it does not involve any dedicated hardware.
+P168: 3.1 Software Requirements
+P169: The entire pipeline is written in Python. Table 3.1 lists the programming language, libraries and tools used, together with the role each plays in the system. Libraries for reading polysomnography files and for wavelet processing are used in the preprocessing stage; scientific computing and machine learning libraries support feature engineering, classification and class balancing; and sequence-modeling libraries support the temporal layer.
+P170: Table 3.1: Software requirements and their roles
+P173: CHAPTER - 4
+P174: SYSTEM DESIGN
+P176: This chapter presents the design of the system. It gives the high-level design, which shows how the modules fit together, and the low-level design of the individual modules, each with a description.
+P177: 4.1 High-Level Design
+P178: Figure 4.1 shows the architecture of the system as a sequence of ten blocks, from the input dataset to the outputs. The first four blocks bring the data into a form suitable for learning, blocks five to seven select features and train the epoch-wise classifiers under a subject-wise protocol, and blocks eight and nine add the temporal modeling layer and evaluate the results. Each block is described below.
+P180: Figure 4.1: High-level architecture of the system.
+P181: 1.	Sleep-EDF Expanded. The input dataset, with the Sleep Cassette (SC) and Sleep Telemetry (ST) subsets. Each recording consists of a PSG file and a hypnogram file in EDF format.
+P182: 2.	Signal loading. The recordings are read with MNE-Python and PyEDFlib. Four channels are used: EEG Fpz-Cz, EEG Pz-Oz, horizontal EOG and submental EMG.
+P183: 3.	Preprocessing. Annotations are mapped to the five classes W, N1, N2, N3 and REM, the signals are resampled to 100 Hz and denoised with a db4 wavelet, each channel is standardised with a per-subject Z-score, the signals are cut into 30-second epochs, and excess wake is trimmed.
+P184: 4.	Feature dataset. Every epoch becomes one row that carries the subject ID, record ID, epoch index and stage label, together with 116 candidate features.
+P185: 5.	Subject-wise evaluation. Subjects are kept separate across the training and test sets, which prevents epoch-level data leakage.
+P186: 6.	Ensemble feature selection. LightGBM gain and mutual information, permutation importance with a stability score, modality weights and correlation filtering retain up to 67 features.
+P187: 7.	Epoch-wise classifiers. LightGBM and ExtraTrees are trained with class weights or with SMOTE and random undersampling (SMOTE-RUS), and produce five-stage probability estimates for every epoch.
+P188: 8.	Temporal modeling. Out-of-fold probabilities are refined with HMM/Viterbi smoothing, a linear-chain CRF and a window BiLSTM.
+P189: 9.	Evaluation. Accuracy, macro F1 and Cohen's Kappa are reported, together with per-class precision, recall and F1, with emphasis on the N1 F1 score, and confusion matrices.
+P190: 10.	Explainable outputs. The list of selected features is an output of the pipeline. SHAP attributions and an evidence-grounded clinical-style report are part of the future scope described in Section 8.2.
+P191: Data move through the system as a sequence of progressively more compact representations. A recording enters as four continuous signals sampled at a fixed rate together with a list of annotated stage intervals. After preprocessing, each recording is represented as a set of 30-second epochs, where each epoch contains one segment per channel and is paired with an integer stage label and a subject identifier. The subject identifier is carried through the entire pipeline because it is needed to split the data without leakage. After feature extraction, an epoch becomes a vector of 116 numbers, and after selection a vector of 67 numbers; the epochs of a recording, kept in their original order, form a table whose rows are consecutive in time. This preserved order is what makes the temporal modeling layer possible. The output of the classifier is a probability for each of the five stages for every epoch, and the output of the temporal layer is a refined label sequence for the whole night.
+P192: 4.2 Low-Level Design
+P193: 4.2.1 Signal preprocessing module
+P194: Figure 4.2 shows the stages of the preprocessing module. A recording and its hypnogram are loaded and the four channels are resampled to a common sampling rate of 100 Hz. Wavelet denoising then removes high-frequency noise, and each channel is normalised with a Z-score computed within a single subject's recording. Annotations are mapped to the five classes, long stretches of wake at the start and end of the night are trimmed, and the continuous signal is cut into non-overlapping 30-second epochs. The order of these stages is chosen so that the signal-level operations (resampling, denoising and normalisation) are completed before the data are split into epochs and labelled.
+P196: Figure 4.2: Low-level design of the preprocessing module.
+P197: 4.2.2 Feature extraction module
+P198: The feature extraction module (see Figure 4.3) computes five families of features from each epoch: time-domain statistics, frequency-domain band powers, Hjorth parameters, permutation entropy, and Teager–Kaiser energy operator (TKEO) features. Time-domain statistics and band powers describe the waveform and spectrum of the signals, Hjorth parameters and permutation entropy characterise the statistical and dynamic complexity of the EEG, and TKEO features are computed on the EOG and EMG channels, where they highlight brief bursts of eye movement and muscle activity. All features of an epoch are concatenated into a single vector of 116 values, and each feature keeps a name that records its channel and family, so that it can be traced back to its physiological meaning during explanation.
+P200: Figure 4.3: Low-level design of the feature extraction module.
+P201: 4.2.3 Feature selection module
+P202: Not all of the 116 features are equally useful, and many are strongly correlated with each other. The feature selection module (see Figure 4.4) therefore scores every feature in three complementary ways — LightGBM importance, mutual information with the stage label, and permutation importance — and combines these scores. A stability score rewards features that rank highly consistently across validation folds, and a modality weighting gives priority to features from EEG over those from EOG and EMG, reflecting the central role of EEG in the scoring rules. Finally, a correlation filter removes features that are nearly duplicates of an already retained feature. The result is a compact subset of 67 features that is both predictive and minimally redundant.
+P204: Figure 4.4: Low-level design of the ensemble feature selection module.
+P205: 4.2.4 Baseline classification module
+P206: The classification module trains gradient-boosted trees (LightGBM) and extremely randomised trees (ExtraTrees) on the selected features. Because the stages are very unevenly represented (Wake and N2 are far more common than N1 and N3), the training data are balanced by synthetic oversampling of minority stages (SMOTE) combined with random undersampling of majority stages. The models are tuned, and a modality ablation retrains them on EEG-only, EOG-only, EMG-only and combined feature sets to measure the contribution of each signal. The module outputs a probability for each stage for every epoch, which is also the input to the temporal layer.
+P207: 4.2.5 Temporal modeling module
+P208: The baseline treats each epoch separately. The temporal module (see Figure 4.5) takes the sequence of stage probabilities of a whole night and refines it using the structure of sleep. Three alternatives are implemented and compared. The HMM with Viterbi decoding treats the stages as hidden states with learned transition probabilities and finds the most probable overall stage sequence. The linear-chain CRF models the dependence between neighbouring labels directly. The window BiLSTM reads a window of consecutive epochs in both directions and predicts the stage of the epoch in focus. All three produce a smoothed hypnogram, so they can be compared on identical terms.
+P210: Figure 4.5: Low-level design of the temporal modeling module, showing the three alternatives compared.
+P212: CHAPTER - 5
+P213: SYSTEM IMPLEMENTATION
+P215: This chapter describes how each module of the design was implemented. For every module it explains the method, the reasoning behind it and the way it is realised in the code.
+P216: 5.1 Modules Used with Description
+P217: Table 5.1 lists the modules of the system, the data each one consumes and produces, and its implementation status at the time of writing.
+P218: Table 5.1: Modules of the system with inputs, outputs and status
+P220: 5.2 Data Organisation
+P221: The full Sleep-EDF Expanded dataset was downloaded, including both the Sleep Cassette and Sleep Telemetry recordings, and organised so that each polysomnography file is paired with its hypnogram file. For every recording the subject identifier is extracted from the file name and stored, since it is later used to group epochs by subject when splitting data. The four channels used are EEG Fpz-Cz, EEG Pz-Oz, horizontal EOG and submental EMG. Table 5.2 summarises the dataset.
+P223: Table 5.2: Specification of the Sleep-EDF Expanded dataset
+P225: In Sleep-EDF, the SC subset was collected to study the influence of age on sleep, and the ST subset was collected to study the effect of a temazepam sleep aid on individuals with mild difficulty falling asleep. Because some subjects contributed more than one night, the unit for splitting data in this project is the subject, not the recording; this point is important for the evaluation protocol described in Section 5.6.3.
+P227: 5.3 Signal Preprocessing
+P228: 5.3.1 Resampling
+P229: Recordings from different sources and channels do not all use the same sampling rate. To obtain uniform epochs, every channel is resampled to a common rate of 100 Hz. A common rate means that every 30-second epoch has the same number of samples in every channel and every recording, which allows epochs to be stacked into arrays and feature extractors to be applied uniformly.
+P230: 5.3.2 Wavelet denoising
+P231: Physiological signals are contaminated by noise from electrical interference, electrode movement and muscle activity. Conventional fixed filters are less effective for EEG, which is non-stationary, because a filter that removes noise at one moment can also remove genuine signal at another. Wavelet denoising adapts to the signal. It has three steps: the signal is decomposed into several frequency levels with a discrete wavelet transform; coefficients whose magnitude is below a statistically derived threshold are set to zero or shrunk towards zero (soft thresholding); and the signal is reconstructed from the modified coefficients. In soft thresholding, a coefficient w is replaced by
+P232: 	ŵ = sign(w) · max(|w| − λ, 0)	(1)
+P233: where λ is the threshold. Fine-scale coefficients dominated by noise are suppressed, while larger coefficients that carry the sleep-relevant waveform are kept. The wavelet family used is Daubechies 4 (db4), and the number of decomposition levels is [FILL: number of levels].
+P234: Figure 5.1 shows a quality check of the denoising on one 30-second epoch from recording SC4001. In each panel the grey curve is the original signal and the blue curve is the denoised signal. For the EEG Pz-Oz channel the original trace is dominated by fast, jagged fluctuations around a slower waveform; after denoising, these are strongly reduced while the slow waveform is retained. For the EEG Fpz-Cz channel and the EOG channel the two curves almost coincide, which shows that the large-scale waveform, including the sharp peaks, is preserved when little noise is present. The EMG trace is already smooth, and denoising softens a few of its peaks slightly. Overall, the figure confirms that noise is removed while the main structure of the signal is kept.
+P236: Figure 5.1: Wavelet denoising quality check on one 30-second epoch of recording SC4001. Grey: original signal; blue: denoised signal.
+P237: 5.3.3 Per-subject Z-score normalisation
+P238: The amplitude of EEG, EOG and EMG signals varies greatly between people because of differences in skull thickness, skin impedance and electrode placement. These differences are unrelated to sleep stage. To remove them, each channel of each subject's recording is standardised using that recording's own mean and standard deviation:
+P239: 	z = (x − μsubject,channel) / σsubject,channel	(2)
+P240: The statistics are computed from a single individual's data only. As a result, the classifier sees signals on a common scale and is encouraged to learn patterns that are shared across people instead of person-specific baselines, which improves its ability to generalise to unseen subjects.
+P241: 5.3.4 Wake trimming and epoch segmentation
+P242: Sleep laboratory recordings often contain long periods of wakefulness before lights-out and after the final awakening. These periods are not informative and, if kept, make Wake by far the dominant class. Excess wake periods at the beginning and end of each recording are therefore trimmed [FILL: how much wake is retained, for example 30 minutes before and after sleep]. The continuous signals are then cut into non-overlapping 30-second epochs, the standard unit of the AASM scoring manual, and each epoch is given the label of the annotation that covers it.
+P243: 5.4 Feature Extraction
+P244: Each epoch is converted into a vector of 116 features computed from the four channels. The features fall into five families, described in Table 5.3. Time-domain and frequency-domain features are standard in sleep analysis, while Hjorth parameters, permutation entropy and the TKEO add information about signal complexity and transient events.
+P245: Table 5.3: Feature families extracted from each epoch
+P247: Frequency-domain features. The power spectral density of each epoch is estimated, for example with Welch's method, and the power in each canonical band is integrated. Relative band power divides each band's power by the total power, which makes it robust to amplitude scaling. Slow delta power is the signature of N3, sleep spindles raise power in the sigma band during N2, and the alpha rhythm is the signature of relaxed wakefulness.
+P248: Hjorth parameters. For a signal x(t), Hjorth mobility and complexity are defined from the variances of the signal and its first and second derivatives:
+P249: 	Mobility = √( var(x′) / var(x) ),   Complexity = Mobility(x′) / Mobility(x)	(3)
+P250: Mobility is proportional to the mean frequency of the signal and complexity measures how similar the signal is to a pure sine wave, so together they describe the statistical and spectral character of the EEG with just two numbers.
+P251: Permutation entropy. The signal is divided into short vectors, and each vector is replaced by the order pattern of its values. The Shannon entropy of the distribution of these patterns measures how regular or complex the signal is. Entropy tends to be lower in the regular slow-wave activity of deep sleep and higher in the irregular activity of wakefulness and REM.
+P252: Teager–Kaiser energy operator. For a discrete signal x[n], the operator is
+P253: 	ψ(x[n]) = x[n]² − x[n−1] · x[n+1]	(4)
+P254: It tracks the instantaneous energy of a signal and responds strongly to short bursts, which makes it suited to detecting the rapid eye movements of REM sleep in the EOG and the brief muscle activity in the EMG. [FILL: summary statistics computed from the TKEO]
+P255: [FILL: breakdown of how the 116 features are distributed over families and channels]
+P256: 5.5 Feature Selection
+P257: Using all 116 features increases training cost and the risk of overfitting, and many features carry almost the same information. An ensemble selection procedure reduces the set to 67 features in four stages.
+P258: 1.	Three importance measures. Each feature is scored by (i) the importance assigned by a LightGBM model, (ii) its mutual information with the stage label, and (iii) its permutation importance, which is the drop in model performance when the feature's values are shuffled. The three measures have different strengths and biases, so combining them is more reliable than relying on one.
+P259: 2.	Stability scoring. The scores are computed across several validation folds, and a stability score rewards features whose rank stays high from fold to fold. This avoids selecting features that look important only in one particular split.
+P260: 3.	Modality weighting. The combined score is multiplied by a weight that reflects domain knowledge: features from EEG are favoured over those from EOG and EMG, because EEG is the primary basis of the scoring rules. [FILL: weights used for EEG, EOG and EMG]
+P261: 4.	Correlation filtering. When two retained features are highly correlated (above a threshold [FILL: correlation threshold]), the lower-ranked one is removed. This leaves a subset that is predictive and minimally redundant.
+P262: The outcome of the four stages is a set of 67 features, which is used by all later modules. [CONFIRM: that feature scoring and selection were performed using training subjects only]
+P263: 5.6 Baseline Classification
+P264: 5.6.1 Classifiers
+P265: Two ensemble classifiers are used as baselines. LightGBM is a gradient boosting framework that builds decision trees sequentially, with each new tree correcting the errors of the previous ones; it is fast, handles tabular features well and provides feature importance. ExtraTrees builds many randomised decision trees independently and averages their votes, which reduces variance. Both are well suited to a moderately sized, tabular feature set and require no feature scaling. Their hyperparameters were tuned [FILL: tuned hyperparameters and search method, for example number of trees, depth, learning rate].
+P266: 5.6.2 Handling class imbalance
+P267: The class distribution is strongly skewed (see Figure 7.1 in Chapter 7): N2 and Wake dominate while N1 and N3 are rare. A classifier trained on such data tends to favour the common stages. To counter this, the training data are rebalanced with SMOTE, which creates synthetic examples of minority classes by interpolating between neighbouring real examples, combined with random undersampling of the majority classes. The resampling is applied only to the training data, never to the evaluation subjects, so the evaluation reflects the real class distribution.
+P268: 5.6.3 Subject-wise evaluation
+P269: The evaluation protocol is designed to prevent information from the evaluation subjects reaching the model during training. All Sleep-EDF subjects are divided into training subjects and held-out subjects, and every epoch of a subject goes to exactly one of the two groups. Models are fitted and class balancing is applied using training subjects only, and held-out subjects are used only to compute metrics. This matters because consecutive epochs from one person are highly similar: if epochs were split at random, near-identical epochs from the same night would fall on both sides of the split and the measured accuracy would be inflated. Since some subjects contributed more than one night, the split is made by the subject identifier extracted in Section 5.2 and not by recording. [FILL: split scheme, for example number of folds or train/test subject counts]
+P270: 5.6.4 Modality ablation
+P271: To measure how much each signal contributes, the classifiers are retrained using only EEG features, only EOG features, only EMG features, and all features together. The comparison shows whether the multimodal combination is better than any single modality, and which stages depend on which signal; the results are reported in Chapter 7.
+P272: 5.7 Temporal Modeling
+P273: The baseline classifier outputs, for each epoch, a probability for each of the five stages. The temporal models take the whole sequence of these outputs for a night and refine it.
+P274: 5.7.1 Hidden Markov Model with Viterbi decoding
+P275: In the HMM formulation, the five stages are hidden states, and the transition matrix A, with entries aij = P(stage j at epoch t+1 | stage i at epoch t), is estimated from the training hypnograms. It captures the facts that stages are persistent and that some transitions (for example W to N1) are far more common than others (for example W to N3). The classifier's output plays the role of the observation. The most probable state sequence is found with the Viterbi algorithm, whose recursion is
+P276: 	δt(j) = maxi [ δt−1(i) · aij ] · bj(ot)	(5)
+P277: where bj(ot) is the emission score of stage j for the observation at epoch t, and the best path is recovered by back-tracking. Because a single epoch that disagrees with both of its neighbours is unlikely under the transition matrix, isolated errors are smoothed out. [CONFIRM: how emission scores are derived from the classifier output and how the transition matrix is estimated]
+P278: 5.7.2 Linear-chain Conditional Random Field
+P279: A linear-chain CRF is a discriminative sequence model. Given the observation sequence x, the probability of a label sequence y is
+P280: 	P(y | x) = (1/Z(x)) · exp( Σt Σk λk fk(yt−1, yt, x, t) )	(6)
+P281: where fk are feature functions on label transitions and observations, λk their learned weights, and Z(x) a normalising constant. Unlike the HMM, the CRF learns the weights of transition and observation features jointly. [CONFIRM: features supplied to the CRF and training settings]
+P282: 5.7.3 Window BiLSTM
+P283: A long short-term memory network processes a sequence while maintaining a memory cell, and a bidirectional LSTM reads the sequence both forwards and backwards, so each position is informed by both past and future context. In this module, a window of consecutive epochs is fed to the BiLSTM and the network predicts the stage of the epoch in focus. [FILL: window length, hidden size, number of layers, loss function, optimiser, epochs]
+P284: 5.8 Evaluation Metrics
+P285: The following metrics are computed from the confusion matrix. For each class c, with true positives TP, false positives FP and false negatives FN,
+P286: 	Precision = TP / (TP + FP),   Recall = TP / (TP + FN),   F1 = 2 · Precision · Recall / (Precision + Recall)	(7)
+P287: Accuracy is the fraction of epochs classified correctly. Macro F1 is the unweighted mean of the five per-class F1 scores, so each stage counts equally regardless of how common it is. Cohen's Kappa measures agreement beyond what would be expected by chance:
+P288: 	κ = (po − pe) / (1 − pe)	(8)
+P289: where po is the observed agreement (equal to accuracy) and pe is the agreement expected by chance from the class frequencies. Kappa is widely used in sleep staging because it is the standard way to report agreement between scorers.
+P291: CHAPTER - 6
+P292: SYSTEM TESTING
+P294: Testing of a machine learning pipeline differs from testing conventional software. In addition to checking that each module runs and produces correctly shaped output, one has to check that the data are processed faithfully, that the evaluation is free of leakage, and that the reported numbers can be reproduced. This chapter describes the testing strategy, the validation that has been carried out, and the test cases defined for the system.
+P295: 6.1 Testing Strategy
+P296: Testing is organised at four levels. Data-level tests check that recordings are paired correctly with annotations, that labels are mapped correctly, and that epochs have the expected shape. Module-level tests check each processing stage on its own, for example that the denoising removes noise without distorting the signal and that the feature extractor returns the expected number of features. Protocol-level tests check that the evaluation is leakage-free, which is the most important property for the trustworthiness of the results. Result-level tests check that reported metrics are consistent with the underlying predictions.
+P297: 6.2 Validation of Signal Preprocessing
+P298: The denoising stage was validated by visual inspection of the original and denoised signals for each channel, as shown in Figure 5.1. The check confirmed three expected properties: noise is clearly reduced on the noisiest channel (EEG Pz-Oz); channels with little noise (EEG Fpz-Cz and EOG) are left essentially unchanged; and sharp peaks that carry sleep-relevant information are preserved. The EMG trace showed slight softening of a few peaks, which is acceptable because the features derived from EMG describe muscle tone level and short bursts rather than the exact peak amplitudes.
+P299: 6.3 Validation of the Evaluation Protocol
+P300: The evaluation protocol (Section 5.6.3) separates training and evaluation by subject. The principal protocol-level checks are that no subject identifier occurs in both groups, that class balancing by SMOTE and undersampling is applied to training data only, and that any statistic learned from data, such as the normalisation used for a subject, is computed from that subject's data only. These checks matter because a random epoch-wise split would let near-identical epochs from the same night appear on both sides of the split, and would inflate the measured accuracy. This is one reason why the results reported in Chapter 7 are lower than values reported for epoch-wise splits in the literature.
+P301: 6.4 Reproducing the Reported Metrics
+P302: A result-level test was carried out to confirm that the headline metrics are consistent with the stored predictions. The accuracy, macro F1 and Cohen's Kappa of the baseline and of the HMM/Viterbi model were recomputed from their confusion matrices (reported in Section 7.4) and compared with the values produced by the experiment scripts. Table 6.1 shows that the recomputed values agree with the reported values to four decimal places, which confirms that the confusion matrices and the reported scores describe the same set of predictions.
+P303: Table 6.1: Reported metrics compared with metrics recomputed from the confusion matrices
+P305: 6.5 Test Cases
+P306: Table 6.2 lists the test cases defined for the system, their expected outcome and their status. Cases marked Done have been carried out and are discussed above.
+P307: Table 6.2: Test cases for the sleep staging system
+P310: CHAPTER - 7
+P311: RESULTS AND ANALYSIS
+P313: This chapter reports the results of the experiments on Sleep-EDF Expanded. It first describes the experimental setup and the class distribution, then compares the baseline classifier with the three temporal models, and then analyses the errors in detail, with particular attention to the N1 stage. The runs reported here are preliminary results of the first execution of the temporal comparison.
+P314: 7.1 Experimental Setup
+P315: All results are computed with the subject-wise protocol described in Section 5.6.3. The classifiers use the 67 selected features, and the baseline is the LightGBM or ExtraTrees configuration with SMOTE and undersampling described in Chapter 5. The temporal models operate on the output of this baseline. [FILL: number of training and evaluation subjects or folds, the classifier configuration behind the baseline row, and the random seed]
+P316: 7.2 Class Distribution
+P317: Figure 7.1 and Table 7.1 show the number of evaluated epochs in each stage. In total 61,166 epochs were evaluated. N2 is the most common stage (37.4%), followed by Wake (29.9%) and REM (13.7%), while N1 (10.5%) and N3 (8.5%) are the rarest. This imbalance explains why accuracy alone is a poor summary of performance and why macro F1 and the N1 score are reported: a classifier could reach a high accuracy by performing well on N2 and Wake alone.
+P319: Figure 7.1: Number of evaluated epochs per sleep stage.
+P320: Table 7.1: Evaluated epochs per stage
+P322: 7.3 Baseline versus Temporal Models
+P323: Table 7.2 and Figure 7.2 compare the epoch-independent baseline with the HMM/Viterbi model, the linear-chain CRF and the window BiLSTM on overall accuracy, macro F1, Cohen's Kappa and N1 F1.
+P324: Table 7.2: Overall performance of the baseline and the three temporal models
+P327: Figure 7.2: Accuracy, macro F1, Cohen's Kappa and N1 F1 for the baseline and the three temporal models.
+P328: The HMM/Viterbi model is the only temporal model that improves on the baseline. It raises accuracy from 0.758 to 0.791, macro F1 from 0.696 to 0.724 (a gain of 2.8 percentage points), Kappa from 0.672 to 0.713, and N1 F1 from 0.426 to 0.439 (1.3 points). The gain is modest in absolute terms but consistent across all four metrics, and it supports the idea that the sequential structure of sleep carries information that epoch-independent classification discards.
+P329: The CRF and BiLSTM fall below the baseline in this first run. The CRF reaches an accuracy of 0.609 but a macro F1 of only 0.354, a large gap that indicates that it performs poorly on the minority stages, and the BiLSTM reaches only 0.489 macro F1 and 0.197 N1 F1. Since both models are more flexible than the HMM, their weaker performance is more likely to reflect configuration and training than a limitation of the approach; possible causes include insufficient tuning, an unsuitable window length for the BiLSTM, and the handling of class imbalance in the sequence models. These explanations are hypotheses, and the results should be read as a first run and not as a final ranking.
+P330: 7.4 Confusion Matrix Analysis
+P331: Figure 7.3 shows the confusion matrices of the baseline and the HMM/Viterbi model. Each cell shows the number of epochs and, below it, the percentage of the true stage; rows are true stages and columns are predicted stages. The diagonal therefore shows the recall of each stage.
+P333: Figure 7.3: Confusion matrices of the baseline (left) and the HMM/Viterbi model (right). Cells show epoch counts and the percentage of each true stage.
+P334: For the baseline, Wake is classified correctly in 89% of cases, N2 in 76%, N3 in 62%, REM in 79% and N1 in only 44%. The N1 row shows where its errors go: 28% of true N1 epochs are labelled N2, 15% Wake and 12% REM. This is consistent with the physiology: N1 is a brief transitional stage whose EEG resembles Wake before it and N2 after it, and its low-amplitude mixed-frequency pattern resembles REM. The N3 row shows a second confusion: 35% of true N3 epochs are labelled N2, which reflects the gradual transition between light and deep sleep.
+P335: The matrix of the HMM/Viterbi model shows that the temporal layer changes the balance of errors rather than removing them. Recall improves for Wake (89% to 91%), N2 (76% to 82%) and REM (79% to 87%), but falls for N1 (44% to 40%) and N3 (62% to 61%). At the same time, the share of N1 epochs labelled N2 rises from 28% to 34%. The temporal layer therefore helps most for stages that occur in long, stable runs, and it is least helpful, and slightly harmful to recall, for the brief N1 stage.
+P336: 7.5 Per-Class Analysis
+P337: Table 7.3 and Figure 7.4 give the precision, recall and F1 of each stage for the baseline and for HMM/Viterbi, computed from the confusion matrices.
+P338: Table 7.3: Per-class precision, recall and F1 of the baseline and HMM/Viterbi models
+P341: Figure 7.4: Per-class F1 (left) and recall (right) for the baseline and the HMM/Viterbi model.
+P342: The F1 gains of the temporal layer are largest for REM (+7.1 points, from 0.756 to 0.827), followed by N2 (+2.8), Wake (+1.7), N1 (+1.3) and N3 (+1.0). The large gain for REM is plausible: REM occurs in sustained blocks, and the cues that distinguish it from N1 and N2 are subtle at the level of a single epoch but become clear in context. N1 gains least because its epochs are short and frequently isolated, which is exactly the kind of epoch that sequence smoothing tends to overrule.
+P343: 7.6 Analysis of the N1 Stage
+P344: Because N1 is the stage the project aims to improve, Table 7.4 and Figure 7.5 give its precision, recall and F1 for all four models.
+P345: Table 7.4: N1-stage precision, recall and F1 for all models
+P348: Figure 7.5: N1-stage precision, recall and F1 for the baseline and the three temporal models.
+P349: Three observations stand out. First, HMM/Viterbi trades recall for precision: it predicts N1 less often (5,334 epochs compared with 6,704 for the baseline), so fewer of its N1 predictions are wrong and precision rises from 0.417 to 0.484, but it also misses more true N1 epochs, so recall falls from 0.435 to 0.402. The net effect on F1 is a small gain. Second, the CRF shows the same pattern in a stronger form: its precision (0.482) is as high as that of the HMM, but its recall (0.253) is far lower, so the model is too conservative about predicting N1. Third, the BiLSTM is weak on both precision and recall for N1, which suggests that the model has not learned to represent this minority class adequately.
+P350: 7.7 Comparison with the Reference Study
+P351: The reference study on which the baseline pipeline is modelled reports, for a LightGBM model with SMOTE and undersampling, an accuracy of 0.9034, a macro F1 of 0.7935, a Cohen's Kappa of 0.8263 and an N1 F1 of 0.55. Table 7.5 places these values beside the results of this project.
+P352: Table 7.5: Comparison with the values reported in the reference study
+P354: The values in this project are lower, and the difference should not be read as a deficiency of the pipeline. The reference study describes its evaluation as 5-fold stratified cross-validation and does not state that folds were separated by subject. Under an epoch-wise split, near-identical epochs of the same night can appear in training and test sets, which tends to give optimistic scores. The subject-wise protocol used here is stricter and measures performance on people the model has never seen, which is the situation relevant for clinical use. A like-for-like comparison would require running both protocols on the same data. [CONFIRM: wording once the exact protocol of the reference study is verified]
+P355: 7.8 Modality Ablation
+P356: The modality ablation compares models trained on EEG features only, EOG only, EMG only, and all features together. Table 7.6 is reserved for these results.
+P357: Table 7.6: Modality ablation results
+P359: [FILL: two or three sentences interpreting the ablation, for example which modality contributes most and which stages depend on EOG and EMG]
+P360: 7.9 Discussion
+P361: Taken together, the results support three conclusions. First, temporal context helps: a simple HMM on top of an epoch-independent classifier raises accuracy, macro F1 and Kappa under a strict subject-wise protocol. Second, the benefit is uneven. Stages that occur in long runs (REM, N2 and Wake) gain the most, while the brief and ambiguous N1 stage gains little, and its recall actually decreases. Third, a more flexible temporal model is not automatically better: the CRF and BiLSTM, in this first run, are worse than the baseline, which shows that the temporal layer needs careful treatment of class imbalance and tuning.
+P362: Table 7.7 supports the second of these conclusions by listing the six largest error flows. The temporal layer reduces four of them: N2 labelled as N1 falls by about 30%, N2 labelled as REM by 25%, W labelled as N1 by 19% and N2 labelled as N3 by 16%. The two flows in which a true N1 or N3 epoch is labelled N2, however, grow by 19% and 10%. This indicates that smoothing pulls short or boundary epochs towards the dominant neighbouring stage, N2, which explains why the temporal layer helps stable stages more than N1 and N3.
+P363: Table 7.7: Largest misclassification flows of the baseline and the HMM/Viterbi model
+P365: Several limitations should be kept in mind. The temporal results are from a first run and the more flexible models have not been tuned. The differences between the baseline and HMM have not been tested for statistical significance across subjects. The pipeline has been evaluated on a single dataset, so the results do not establish how it generalises to other recording setups. Finally, the reference-study comparison is indicative, because the evaluation protocols differ.
+P367: CHAPTER - 8
+P368: CONCLUSION AND FUTURE SCOPE
+P370: 8.1 Conclusion
+P371: This project set out to build the foundation of a temporally aware, multimodal sleep staging system, and the pipeline has been implemented and evaluated end to end on the full Sleep-EDF Expanded dataset. Raw recordings are denoised, normalised per subject, trimmed and segmented into 30-second epochs. A set of 116 time-domain, frequency-domain, Hjorth, permutation entropy and TKEO features is extracted from the EEG, EOG and EMG channels, and an ensemble selection method that combines LightGBM importance, mutual information and permutation importance with stability scoring, modality weighting and correlation filtering reduces it to 67 features. Baseline classifiers are trained under a subject-wise protocol with SMOTE and undersampling.
+P372: The temporal modeling comparison gave a clear first result. Under the strict subject-wise protocol, the baseline reaches a macro F1 of 0.696 and an N1 F1 of 0.426. An HMM with Viterbi decoding improves these to 0.724 and 0.439, with accuracy rising from 0.758 to 0.791 and Kappa from 0.672 to 0.713. The confusion matrices show that the gain comes mainly from REM, N2 and Wake, while N1 remains the main challenge: it is mostly confused with N2, and the temporal layer trades some N1 recall for precision. The CRF and BiLSTM did not outperform the baseline in this first run and require further tuning.
+P373: The work therefore delivers a transparent, reproducible and leakage-free foundation: stage predictions, class probabilities and named features on which the extensions described in Section 8.2 can be built.
+P374: 8.2 Future Scope
+P375: The work can be extended in four directions: improving the N1 stage and completing the full-dataset experiments, explaining predictions, generating evidence-based sleep reports, and validating the system on a second dataset.
+P376: 8.2.1 Improving N1 classification and completing the experiments
+P377: 1.	Improve N1 classification. Apply class weighting or focal loss in the CRF and BiLSTM, tune the HMM transition strength so that short N1 episodes are preserved, examine the BiLSTM window length, and add features aimed at N1, such as slow rolling eye movements in the EOG and the shift from alpha to theta activity in the EEG.
+P378: 2.	Complete the full-dataset experiments. Tune all models and compare them on macro F1, Kappa and N1 F1, and test the differences for statistical significance across subjects.
+P379: 8.2.2 SHAP-based explainability
+P380: SHAP assigns to each feature i a contribution, the Shapley value, computed as the weighted average of its marginal contribution over all subsets S of the other features:
+P381: 	φi = ΣS ⊆ F∖i [ |S|! (|F| − |S| − 1)! / |F|! ] · [ f(S ∪ i) − f(S) ]	(9)
+P382: For tree ensembles such as LightGBM, TreeSHAP computes these values exactly and efficiently. For each epoch, the features with the largest contribution towards the predicted stage will be extracted and expressed in physiological terms, for example high relative delta power supporting N3 or low EMG energy supporting REM. Attributions will also be aggregated by stage to show which features characterise each stage overall.
+P383: 8.2.3 LLM-based sleep report generation
+P384: From the predicted hypnogram, the module will compute total sleep time, sleep efficiency (the percentage of time in bed spent asleep), sleep onset latency, wake after sleep onset and the percentage of time in each stage. These metrics, together with the per-stage SHAP evidence, form a structured summary that is placed in a prompt asking the language model to act as a sleep specialist and write a report with a summary, a sleep score, an analysis of sleep architecture against normal ranges, the supporting evidence and recommendations. The prompt will instruct the model to use only the numbers and evidence supplied.
+P385: 8.2.4 Cross-dataset validation on ISRUC-Sleep
+P386: The trained pipeline will be applied unchanged to ISRUC-Sleep, a public dataset of 126 recordings from healthy subjects and subjects with sleep difficulties. The ISRUC channels will be mapped to the closest equivalents of the Sleep-EDF channels, and the same preprocessing, per-subject normalisation, feature extraction and selected feature subset will be used, with nothing re-fitted on ISRUC. The drop in macro F1, N1 F1 and Kappa relative to Sleep-EDF will quantify generalisation, and the confusion matrices will show which stages are most sensitive to the change of dataset. If a drop is observed, simple remedies such as calibration on a few subjects or domain adaptation will be studied.
+P387: 8.2.5 Towards clinical use
+P388: In the longer term, the system should be compared with the scores of several human scorers, studied on recordings from patients with sleep disorders, and offered through a lightweight interface through which a clinician can inspect the hypnogram, the explanations and the report together.
+P390: REFERENCES
+P391: [1]		N. Sreekumar, J. Velayudhan, and A. Veluppal, “Multimodal sleep stage classification with LLM based sleep report,” in Proc. 2nd Int. Conf. Next Generation Electronics (NELeX), 2026.
+P392: [2]		S. K. Satapathy et al., “Machine learning-empowered sleep staging classification using multi-modality signals,” BMC Med. Inform. Decis. Mak., vol. 24, no. 1, p. 119, 2024.
+P393: [3]		X. Xu et al., “An effective and interpretable sleep stage classification approach using multi-domain electroencephalogram and electrooculogram features,” Bioengineering, vol. 12, no. 3, p. 286, 2025.
+P394: [4]		J. Van Der Donckt et al., “Do not sleep on traditional machine learning: Simple and interpretable techniques are competitive to deep learning for sleep scoring,” Biomed. Signal Process. Control, vol. 81, p. 104429, 2023.
+P395: [5]		O. Tsinalis, P. M. Matthews, and Y. Guo, “Automatic sleep stage scoring using time-frequency analysis and stacked sparse autoencoders,” Ann. Biomed. Eng., vol. 44, no. 5, pp. 1587–1597, 2016.
+P396: [6]		A. Supratak et al., “DeepSleepNet: A model for automatic sleep stage scoring based on raw single-channel EEG,” IEEE Trans. Neural Syst. Rehabil. Eng., vol. 25, no. 11, pp. 1998–2008, 2017.
+P397: [7]		L. Chengfan, Q. Yueyu, and D. Xuehai, “A deep learning method approach for sleep stage classification with EEG spectrogram,” Int. J. Environ. Res. Public Health, vol. 19, no. 10, p. 6322, 2022.
+P398: [8]		Z. Jia et al., “GraphSleepNet: Adaptive spatial-temporal graph convolutional networks for sleep stage classification,” in Proc. 29th Int. Joint Conf. Artif. Intell. (IJCAI), 2020.
+P399: [9]		H. Dong et al., “Mixed neural network approach for temporal sleep stage classification,” IEEE Trans. Neural Syst. Rehabil. Eng., vol. 26, no. 2, pp. 324–333, 2018.
+P400: [10]		A. Vilamala, K. H. Madsen, and L. K. Hansen, “Deep convolutional neural networks for interpretable analysis of EEG sleep stage scoring,” in Proc. IEEE 27th Int. Workshop Mach. Learn. Signal Process. (MLSP), 2017.
+P401: [11]		“SleepExplain: Explainable non-rapid eye movement and rapid eye movement sleep stage classification from EEG signal,” arXiv:2606.07351, 2026.
+P402: [12]		U. Tallal, S. Kshirsagar, and A. Shukla, “STDA-Net: Spectrogram-based domain adaptation for cross-dataset sleep stage classification,” arXiv:2605.06736, 2026.
+P403: [13]		A. Amato, “A federated deep learning framework for sleep-stage monitoring using the ISRUC-Sleep dataset,” Appl. Sci., vol. 16, no. 2, p. 1073, 2026.
+P404: [14]		S. Khalighi, T. Sousa, J. M. Santos, and U. Nunes, “ISRUC-Sleep: A comprehensive public dataset for sleep researchers,” Comput. Methods Programs Biomed., vol. 124, pp. 180–192, 2016.
+P405: [15]		P. Anderer et al., “Automatic sleep classification according to Rechtschaffen and Kales,” in Proc. 29th Annu. Int. Conf. IEEE Eng. Med. Biol. Soc., 2007.
+P406: [16]		B. Kemp, A. H. Zwinderman, B. Tuk, H. A. C. Kamphuisen, and J. J. L. Oberyé, “Analysis of a sleep-dependent neuronal feedback loop: The slow-wave microcontinuity of the EEG,” IEEE Trans. Biomed. Eng., vol. 47, no. 9, pp. 1185–1194, 2000.
+P407: [17]		A. L. Goldberger et al., “PhysioBank, PhysioToolkit, and PhysioNet: Components of a new research resource for complex physiologic signals,” Circulation, vol. 101, no. 23, pp. e215–e220, 2000.
+P408: [18]		G. Ke et al., “LightGBM: A highly efficient gradient boosting decision tree,” in Proc. Adv. Neural Inf. Process. Syst. (NIPS), 2017, pp. 3146–3154.
+P409: [19]		N. V. Chawla, K. W. Bowyer, L. O. Hall, and W. P. Kegelmeyer, “SMOTE: Synthetic minority over-sampling technique,” J. Artif. Intell. Res., vol. 16, pp. 321–357, 2002.
+P410: [20]		P. Geurts, D. Ernst, and L. Wehenkel, “Extremely randomized trees,” Mach. Learn., vol. 63, no. 1, pp. 3–42, 2006.
+P411: [21]		L. R. Rabiner, “A tutorial on hidden Markov models and selected applications in speech recognition,” Proc. IEEE, vol. 77, no. 2, pp. 257–286, 1989.
+P412: [22]		J. Lafferty, A. McCallum, and F. Pereira, “Conditional random fields: Probabilistic models for segmenting and labeling sequence data,” in Proc. 18th Int. Conf. Mach. Learn. (ICML), 2001, pp. 282–289.
+P413: [23]		D. L. Donoho, “De-noising by soft-thresholding,” IEEE Trans. Inf. Theory, vol. 41, no. 3, pp. 613–627, 1995.
+P414: [24]		S. M. Lundberg and S.-I. Lee, “A unified approach to interpreting model predictions,” in Proc. Adv. Neural Inf. Process. Syst. (NIPS), 2017, pp. 4765–4774.
+P415: [25]		R. B. Berry et al., The AASM Manual for the Scoring of Sleep and Associated Events: Rules, Terminology and Technical Specifications. Darien, IL, USA: American Academy of Sleep Medicine, 2012.
+
+TABLE 0
+R0: Stage | Description | Characteristic signal patterns
+R1: W (Wake) | Awake, eyes open or closed | Alpha rhythm (8–13 Hz) with eyes closed, mixed fast activity, high muscle tone, eye blinks and movements
+R2: N1 | Lightest non-REM sleep, transition from wake | Low-amplitude mixed-frequency activity with theta (4–7 Hz) activity, slow rolling eye movements, muscle tone slightly reduced
+R3: N2 | Stable light sleep | Sleep spindles and K-complexes on a low-amplitude background, no eye movements
+R4: N3 | Deep (slow-wave) sleep | High-amplitude slow delta waves (0.5–2 Hz) occupying a large share of the epoch
+R5: REM | Dreaming sleep | Low-amplitude mixed-frequency EEG, rapid eye movements, muscle atonia
+
+TABLE 1
+R0: Category | Software / library | Purpose in the system
+R1: Language | Python 3.14.2 | Implementation of all modules
+R2: Signal processing | MNE-Python 1.12.1, pyEDFlib 0.1.42, PyWavelets 1.9.0 | Reading EDF recordings and hypnograms; wavelet denoising; resampling
+R3: Numerical computing | NumPy 2.5.2, SciPy 1.18.1, pandas 3.0.5 | Array handling, spectral estimation, tabular data management
+R4: Machine learning | scikit-learn 1.9.0, LightGBM 4.7.0, imbalanced-learn 0.14.2 | Classifiers, feature selection, SMOTE and undersampling, evaluation metrics
+R5: Temporal modeling | PyTorch 2.14.0; custom NumPy HMM/Viterbi implementation; custom PyTorch linear-chain CRF | BiLSTM, HMM/Viterbi decoding, and linear-chain CRF comparison
+R6: Visualisation | Matplotlib 3.11.1, and Seaborn 0.13.2 | Signal plots, confusion matrices, result charts
+R7: Environment | Visual Studio Code/Jupyter Notebook | Interactive development and GPU-backed experiments
+R8: Version control | Git and GitHub | Source management and collaboration
+
+TABLE 2
+R0: Module | Input | Output | Status
+R1: Data organisation | Raw EDF and hypnogram files | Paired recordings per subject | Implemented
+R2: Signal preprocessing | Four-channel PSG, annotations | Normalised 30 s epochs with labels | Implemented
+R3: Feature extraction | Epochs | 116 features per epoch | Implemented
+R4: Feature selection | 116 features, labels | 67 selected features | Implemented
+R5: Baseline classification | 67 features | Stage probabilities and labels | Implemented
+R6: Temporal modeling | Stage probability sequence | Smoothed hypnogram | Implemented
+
+TABLE 3
+R0: Property | Description
+R1: Recordings | 197 whole-night PSG recordings
+R2: Subgroups | Sleep Cassette (SC): 153 recordings; Sleep Telemetry (ST): 44 recordings
+R3: Population | SC: healthy subjects recorded at home; ST: individuals with mild difficulty falling asleep, studied in a hospital laboratory
+R4: Channels used | EEG Fpz-Cz, EEG Pz-Oz, horizontal EOG, submental EMG
+R5: Annotation standard | Rechtschaffen and Kales (W, N1–N4, REM, Movement)
+R6: Source | physionet.org/content/sleep-edfx
+
+TABLE 4
+R0: Family | Examples | What it captures
+R1: Time domain | Mean, variance, RMS and similar statistics [CONFIRM: exact list] | Amplitude and distribution of the waveform
+R2: Frequency domain | Absolute and relative power in the delta, theta, alpha, sigma and beta bands | Distribution of energy across EEG rhythms, such as delta power in N3 and alpha in Wake
+R3: Hjorth parameters | Mobility and complexity | Mean frequency and bandwidth of the signal from time-domain variances
+R4: Permutation entropy | Ordinal-pattern entropy | Complexity and predictability of the EEG, which differs between stages
+R5: TKEO | Statistics of the Teager–Kaiser energy, on EOG and EMG | Instantaneous energy, highlighting eye-movement bursts and muscle twitches
+
+TABLE 5
+R0: Model | Metric | Reported | Recomputed
+R1: Baseline | Accuracy | 0.7584 | 0.7584
+R2: Baseline | Macro F1 | 0.6963 | 0.6963
+R3: Baseline | Cohen's Kappa | 0.6722 | 0.6722
+R4: HMM / Viterbi | Accuracy | 0.7909 | 0.7909
+R5: HMM / Viterbi | Macro F1 | 0.7242 | 0.7242
+R6: HMM / Viterbi | Cohen's Kappa | 0.7134 | 0.7134
+
+TABLE 6
+R0: ID | Module | Test | Expected result | Status
+R1: T1 | Preprocessing | Compare original and denoised signals on all four channels | Noise reduced; peaks preserved | Done
+R2: T2 | Data | Every recording is paired with exactly one hypnogram | No unpaired files | [FILL]
+R3: T3 | Data | Label mapping from R&K to five classes | Stages 3 and 4 merged; movement excluded | [FILL]
+R4: T4 | Preprocessing | Epoch array shape per recording | Epochs × channels × samples per epoch | [FILL]
+R5: T5 | Features | Feature vector length per epoch | 116 values, no missing entries | [FILL]
+R6: T6 | Selection | Number of features retained | 67 features | [FILL]
+R7: T7 | Protocol | No subject in both training and evaluation groups | Empty intersection | [FILL]
+R8: T8 | Protocol | Resampling applied to training data only | Evaluation class distribution unchanged | [FILL]
+R9: T9 | Results | Recompute metrics from confusion matrices | Match reported values | Done
+R10: T10 | Temporal | Output sequence length equals input length | One label per epoch | [FILL]
+
+TABLE 7
+R0: Stage | W | N1 | N2 | N3 | REM | Total
+R1: Epochs | 18,314 | 6,421 | 22,879 | 5,180 | 8,372 | 61,166
+R2: Share | 29.9% | 10.5% | 37.4% | 8.5% | 13.7% | 100%
+
+TABLE 8
+R0: Model | Accuracy | Macro F1 | Cohen's Kappa | N1 F1
+R1: Baseline (epoch-independent) | 0.7584 | 0.6963 | 0.6722 | 0.4258
+R2: HMM / Viterbi | 0.7909 | 0.7242 | 0.7134 | 0.4391
+R3: Linear-chain CRF | 0.6094 | 0.3543 | 0.4242 | 0.3316
+R4: Window BiLSTM | 0.5467 | 0.4889 | 0.4323 | 0.1974
+
+TABLE 9
+R0: Stage | Model | Precision | Recall | F1
+R1: W | Baseline | 0.9047 | 0.8886 | 0.8966
+R2: W | HMM / Viterbi | 0.9212 | 0.9056 | 0.9134
+R3: N1 | Baseline | 0.4168 | 0.4351 | 0.4258
+R4: N1 | HMM / Viterbi | 0.4839 | 0.4020 | 0.4391
+R5: N2 | Baseline | 0.7871 | 0.7625 | 0.7746
+R6: N2 | HMM / Viterbi | 0.7868 | 0.8190 | 0.8026
+R7: N3 | Baseline | 0.6331 | 0.6247 | 0.6289
+R8: N3 | HMM / Viterbi | 0.6732 | 0.6085 | 0.6392
+R9: REM | Baseline | 0.7216 | 0.7928 | 0.7555
+R10: REM | HMM / Viterbi | 0.7845 | 0.8742 | 0.8269
+
+TABLE 10
+R0: Model | Precision | Recall | F1
+R1: Baseline (epoch-independent) | 0.4168 | 0.4351 | 0.4258
+R2: HMM / Viterbi | 0.4839 | 0.4020 | 0.4391
+R3: Linear-chain CRF | 0.4823 | 0.2526 | 0.3316
+R4: Window BiLSTM | 0.2501 | 0.1631 | 0.1974
+
+TABLE 11
+R0: System | Accuracy | Macro F1 | Cohen's Kappa | N1 F1
+R1: Reference study | 0.9034 | 0.7935 | 0.8263 | 0.55
+R2: This work: baseline | 0.7584 | 0.6963 | 0.6722 | 0.4258
+R3: This work: HMM / Viterbi | 0.7909 | 0.7242 | 0.7134 | 0.4391
+
+TABLE 12
+R0: Feature set | Accuracy | Macro F1 | N1 F1
+R1: All features | [FILL] | [FILL] | [FILL]
+R2: EEG only | [FILL] | [FILL] | [FILL]
+R3: EOG only | [FILL] | [FILL] | [FILL]
+R4: EMG only | [FILL] | [FILL] | [FILL]
+
+TABLE 13
+R0: True stage → predicted stage | Share of true stage | Baseline (epochs) | HMM / Viterbi (epochs)
+R1: N1 → N2 | 28% → 34% | 1,822 | 2,168
+R2: N3 → N2 | 35% → 38% | 1,791 | 1,962
+R3: N2 → N3 | 8% → 6% | 1,736 | 1,457
+R4: N2 → N1 | 8% → 5% | 1,725 | 1,209
+R5: N2 → REM | 7% → 5% | 1,497 | 1,124
+R6: W → N1 | 8% → 6% | 1,454 | 1,175

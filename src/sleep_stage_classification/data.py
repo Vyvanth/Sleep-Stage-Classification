@@ -11,7 +11,7 @@ import pandas as pd
 
 from .config import RAW_STAGE_ALIASES, STAGE_ORDER
 from .features import extract_epoch_features
-from .preprocessing import wavelet_denoise, zscore_per_channel
+from .preprocessing import filter_psg_recording, plot_denoising_comparison, wavelet_denoise, zscore_per_channel
 
 
 METADATA_COLUMNS = {"subject_id", "record_id", "epoch_index", "stage"}
@@ -99,7 +99,9 @@ def load_sleep_edf_record(psg_path: str | Path, hypnogram_path: str | Path, chan
     raw = mne.io.read_raw_edf(str(psg_path), preload=True, verbose=False)
     annotations = mne.read_annotations(str(hypnogram_path))
     raw.set_annotations(annotations)
-    raw.pick_channels(channels)
+    picked_channels = _pick_available_channels(raw, channels)
+    _require_requested_channels(picked_channels, channels, Path(psg_path))
+    raw.pick_channels(picked_channels)
     return raw
 
 
@@ -120,6 +122,32 @@ def _pick_available_channels(raw, requested_channels: list[str]) -> list[str]:
     return list(dict.fromkeys(picked))
 
 
+def native_channel_sample_rates(raw) -> dict[str, float]:
+    """Read native EDF channel rates before MNE aligns channels to one grid."""
+
+    extra = raw._raw_extras[0]
+    samples_per_record = np.asarray(extra["n_samps"], dtype=float)
+    record_lengths = np.asarray(extra["record_length"], dtype=float)
+    if len(record_lengths) == 0 or record_lengths[0] <= 0:
+        raise ValueError("EDF record length is invalid; cannot determine native channel sampling rates.")
+    record_seconds = float(record_lengths[0])
+    return {
+        channel: float(samples_per_record[index] / record_seconds)
+        for index, channel in enumerate(raw.ch_names)
+    }
+
+
+def _require_requested_channels(picked_channels: list[str], requested_channels: list[str], raw_path: Path) -> None:
+    """Reject incomplete multimodal records instead of silently changing modality inputs."""
+
+    if len(picked_channels) != len(requested_channels):
+        missing_count = len(requested_channels) - len(picked_channels)
+        raise ValueError(
+            f"{raw_path.name} is missing {missing_count} required PSG channel(s). "
+            f"Expected all of: {requested_channels}; found: {picked_channels}."
+        )
+
+
 def extract_sleep_edf_features(
     pair: SleepEdfPair,
     channels: list[str],
@@ -127,6 +155,8 @@ def extract_sleep_edf_features(
     epoch_seconds: int = 30,
     trim_wake_minutes: int = 30,
     denoise: bool = True,
+    epoch_output_dir: str | Path | None = None,
+    denoising_plot_dir: str | Path | None = None,
 ) -> pd.DataFrame:
     """Load one Sleep-EDF pair and extract one feature row per scored epoch."""
 
@@ -139,21 +169,44 @@ def extract_sleep_edf_features(
     annotations = mne.read_annotations(str(pair.hypnogram_path))
     raw.set_annotations(annotations)
     picked_channels = _pick_available_channels(raw, channels)
-    if not picked_channels:
-        raise ValueError(f"No requested channels found in {pair.psg_path.name}. Available: {raw.ch_names}")
+    _require_requested_channels(picked_channels, channels, pair.psg_path)
+    native_rates = native_channel_sample_rates(raw)
     raw.pick(picked_channels)
+
+    emg_channels = [name for name in picked_channels if "EMG" in name.upper()]
+    for emg_channel in emg_channels:
+        emg_rate = native_rates[emg_channel]
+        if emg_rate > sample_rate_hz + 1e-6:
+            raise ValueError(
+                f"{pair.psg_path.name} has EMG at {emg_rate:g} Hz, above the configured {sample_rate_hz:g} Hz grid."
+            )
+        # Sleep-EDF SC stores EMG at 1 Hz while EEG/EOG are 100 Hz. MNE's EDF
+        # reader aligns that channel to the common raw grid during loading; the
+        # explicit check prevents treating its native rate as if it were 100 Hz.
+        if emg_rate < sample_rate_hz - 1e-6 and raw.info["sfreq"] < sample_rate_hz - 1e-6:
+            raw.resample(sample_rate_hz, npad="auto", verbose=False)
     if abs(raw.info["sfreq"] - sample_rate_hz) > 1e-6:
         raw.resample(sample_rate_hz, npad="auto", verbose=False)
 
     # Normalize against the complete subject recording.  Doing this inside the
     # epoch loop would make every 30-second segment independently mean-zero,
     # which is not the per-subject normalization specified for this project.
-    recording_signal = raw.get_data()
+    original_signal = raw.get_data()
+    recording_signal = filter_psg_recording(original_signal, picked_channels, sample_rate_hz, native_rates)
     if denoise:
         recording_signal = wavelet_denoise(recording_signal)
+        if denoising_plot_dir is not None:
+            plot_denoising_comparison(
+                original_signal,
+                recording_signal,
+                picked_channels,
+                sample_rate_hz,
+                Path(denoising_plot_dir) / f"{pair.record_id}_denoising.png",
+            )
     recording_signal = zscore_per_channel(recording_signal)
 
     rows = []
+    epoch_signals: list[np.ndarray] = []
     samples_per_epoch = int(round(sample_rate_hz * epoch_seconds))
     for annotation in raw.annotations:
         stage = normalize_stage(annotation["description"])
@@ -179,11 +232,30 @@ def extract_sleep_edf_features(
             }
             row.update(extract_epoch_features(signal, picked_channels, sample_rate_hz))
             rows.append(row)
+            epoch_signals.append(signal)
 
     frame = pd.DataFrame(rows)
-    if frame.empty or trim_wake_minutes <= 0:
+    if frame.empty:
         return frame
-    return trim_outer_wake_epochs(frame, keep_minutes=trim_wake_minutes, epoch_seconds=epoch_seconds)
+    retained_indices = np.arange(len(frame))
+    if trim_wake_minutes > 0:
+        frame = trim_outer_wake_epochs(frame, keep_minutes=trim_wake_minutes, epoch_seconds=epoch_seconds)
+        retained_indices = frame.index.to_numpy()
+        frame = frame.reset_index(drop=True)
+    if epoch_output_dir is not None:
+        archive_path = Path(epoch_output_dir) / f"{pair.record_id}_epochs.npz"
+        archive_path.parent.mkdir(parents=True, exist_ok=True)
+        np.savez_compressed(
+            archive_path,
+            epochs=np.asarray(epoch_signals, dtype=np.float32)[retained_indices],
+            labels=frame["stage"].to_numpy(dtype=str),
+            epoch_indices=frame["epoch_index"].to_numpy(dtype=int),
+            channel_names=np.asarray(picked_channels, dtype=str),
+            subject_id=np.asarray(pair.subject_id),
+            record_id=np.asarray(pair.record_id),
+            sample_rate_hz=np.asarray(sample_rate_hz),
+        )
+    return frame
 
 
 def trim_outer_wake_epochs(frame: pd.DataFrame, keep_minutes: int = 30, epoch_seconds: int = 30) -> pd.DataFrame:
@@ -209,6 +281,8 @@ def build_sleep_edf_feature_csv(
     sample_rate_hz: float = 100.0,
     trim_wake_minutes: int = 30,
     denoise: bool = True,
+    epoch_output_dir: str | Path | None = None,
+    denoising_plot_dir: str | Path | None = None,
 ) -> Path:
     """Extract Sleep-EDF features from several records and write one CSV."""
 
@@ -227,6 +301,8 @@ def build_sleep_edf_feature_csv(
             sample_rate_hz=sample_rate_hz,
             trim_wake_minutes=trim_wake_minutes,
             denoise=denoise,
+            epoch_output_dir=epoch_output_dir,
+            denoising_plot_dir=denoising_plot_dir,
         )
         if not frame.empty:
             frames.append(frame)
