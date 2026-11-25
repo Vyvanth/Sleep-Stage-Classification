@@ -419,15 +419,17 @@ def cmd_temporal_benchmark(args: argparse.Namespace) -> None:
     transition = estimate_transition_by_record(
         y_train, train_records, train_epochs, n_states=len(STAGE_ORDER)
     )
-    candidate_weights = [0.0, 0.15, 0.35, 0.60, 1.0]
-    tuned_weight = max(
-        candidate_weights,
-        key=lambda weight: comparison_tables(
-            y_train,
-            {"hmm": smooth_probability_sequences(calibration_oof, train_records, train_epochs, transition, weight)},
-            list(result.label_encoder.classes_),
-        )[0].iloc[0]["macro_f1"],
-    )
+    candidate_weights = [0.0, 0.05, 0.10, 0.15, 0.25, 0.35, 0.50, 0.60, 0.75, 1.0, 1.25]
+    hmm_tuning_scores = []
+    for weight in candidate_weights:
+        candidate_predictions = smooth_probability_sequences(
+            calibration_oof, train_records, train_epochs, transition, weight
+        )
+        candidate_overall, _ = comparison_tables(
+            y_train, {"hmm": candidate_predictions}, list(result.label_encoder.classes_)
+        )
+        hmm_tuning_scores.append({"transition_weight": weight, **candidate_overall.iloc[0].to_dict()})
+    tuned_weight = max(hmm_tuning_scores, key=lambda item: item[args.hmm_selection_metric])["transition_weight"]
     hmm_predictions = smooth_probability_sequences(
         calibrated_test_probabilities, test_records, test_epochs, transition, tuned_weight
     )
@@ -481,6 +483,8 @@ def cmd_temporal_benchmark(args: argparse.Namespace) -> None:
         "oof_folds": min(args.oof_folds, train_metadata["subject_id"].nunique()),
         "hmm_transition_weight": tuned_weight,
         "hmm_transition_matrix": transition.tolist(),
+        "hmm_selection_metric": args.hmm_selection_metric,
+        "hmm_training_oof_candidates": hmm_tuning_scores,
         "probability_calibration": "cross-fitted multinomial logistic calibration on baseline OOF probabilities",
         "lightgbm_params": parameters,
         "nested_tuning": args.tune_on_training,
@@ -666,6 +670,12 @@ def build_parser() -> argparse.ArgumentParser:
     temporal_benchmark.add_argument("--feature-selection", choices=["none", "ensemble"], default="ensemble")
     temporal_benchmark.add_argument("--select-k", type=int, default=67)
     temporal_benchmark.add_argument("--oof-folds", type=int, default=3, help="Whole-subject folds for baseline OOF probabilities")
+    temporal_benchmark.add_argument(
+        "--hmm-selection-metric",
+        choices=["accuracy", "macro_f1", "cohen_kappa"],
+        default="macro_f1",
+        help="Training-only OOF metric used to select the HMM transition strength",
+    )
     temporal_benchmark.add_argument("--crf-epochs", type=int, default=20)
     temporal_benchmark.add_argument("--lstm-window", type=int, default=11, help="Odd consecutive-epoch window size")
     temporal_benchmark.add_argument("--lstm-epochs", type=int, default=15)
