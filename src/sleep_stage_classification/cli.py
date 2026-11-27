@@ -464,10 +464,28 @@ def cmd_temporal_benchmark(args: argparse.Namespace) -> None:
             validation_groups=train_metadata["subject_id"].to_numpy(),
         )
         fitted_bilstms.append(candidate)
-    bilstm = max(
+    selected_bilstm = max(
         fitted_bilstms,
         key=lambda item: (item.validation_score_, item.validation_macro_f1_),
     )
+    # The validation split chooses the loss and epoch count; a fresh model is
+    # then fitted on every final-training subject before held-out evaluation.
+    bilstm = WindowBiLSTM(
+        feature_count=len(selected),
+        window_size=args.lstm_window,
+        batch_size=args.lstm_batch_size,
+        loss=selected_bilstm.loss_name,
+        focal_gamma=selected_bilstm.focal_gamma,
+        validation_metric=args.bilstm_selection_metric,
+    )
+    bilstm.fit_full(
+        X_train[selected], y_train, train_records, train_epochs,
+        epochs=selected_bilstm.best_epoch_,
+    )
+    bilstm.validation_score_ = selected_bilstm.validation_score_
+    bilstm.validation_macro_f1_ = selected_bilstm.validation_macro_f1_
+    bilstm.validation_n1_f1_ = selected_bilstm.validation_n1_f1_
+    bilstm.best_epoch_ = selected_bilstm.best_epoch_
     bilstm_predictions = _fill_sequence_edges(
         bilstm.predict(X_test[selected], test_records, test_epochs), baseline_predictions
     )
@@ -511,6 +529,8 @@ def cmd_temporal_benchmark(args: argparse.Namespace) -> None:
         "bilstm_loss": bilstm.loss_name,
         "bilstm_focal_gamma": bilstm.focal_gamma,
         "bilstm_selection_metric": args.bilstm_selection_metric,
+        "bilstm_selected_epochs": bilstm.best_epoch_,
+        "bilstm_retrained_on_full_training_subjects": True,
         "bilstm_validation_macro_f1": bilstm.validation_macro_f1_,
         "bilstm_validation_n1_f1": bilstm.validation_n1_f1_,
         "bilstm_validation_candidates": [

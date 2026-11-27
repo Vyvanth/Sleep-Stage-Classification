@@ -176,10 +176,10 @@ class WindowBiLSTM:
         class_weights = torch.tensor(weights, dtype=torch.float32, device=self.device)
         optimizer = torch.optim.Adam([*self.encoder.parameters(), *self.head.parameters()], lr=0.001)
         best_state, best_score, remaining = None, -1.0, patience
-        for _ in range(epochs):
+        for epoch_number in range(epochs):
             self.encoder.train()
             self.head.train()
-            order = np.random.default_rng(PipelineConfig().random_state + _).permutation(train_idx)
+            order = np.random.default_rng(PipelineConfig().random_state + epoch_number).permutation(train_idx)
             for start in range(0, len(order), self.batch_size):
                 batch_idx = order[start : start + self.batch_size]
                 inputs = torch.as_tensor(windows[batch_idx], dtype=torch.float32, device=self.device)
@@ -206,6 +206,7 @@ class WindowBiLSTM:
             if score > best_score:
                 best_score, remaining = score, patience
                 best_state = (copy.deepcopy(self.encoder.state_dict()), copy.deepcopy(self.head.state_dict()))
+                self.best_epoch_ = epoch_number + 1
                 self.validation_macro_f1_ = macro_f1
                 self.validation_n1_f1_ = n1_f1
             else:
@@ -215,6 +216,40 @@ class WindowBiLSTM:
         self.encoder.load_state_dict(best_state[0])
         self.head.load_state_dict(best_state[1])
         self.validation_score_ = best_score
+        return self
+
+    def fit_full(self, X, labels, record_ids, epoch_indices, epochs: int):
+        """Retrain a selected configuration on every final-training subject."""
+
+        if epochs < 1:
+            raise ValueError("epochs must be positive.")
+        torch = self.torch
+        X = np.asarray(X, dtype=np.float32)
+        mean, std = X.mean(axis=0), X.std(axis=0)
+        self.mean_, self.std_ = mean, np.maximum(std, 1e-8)
+        X = (X - self.mean_) / self.std_
+        windows, targets, _ = self._windows(X, np.asarray(labels), record_ids, epoch_indices)
+        if len(windows) == 0:
+            raise ValueError("No complete sequence windows were available for BiLSTM training.")
+        counts = np.bincount(targets, minlength=5)
+        class_weights = torch.tensor(
+            counts.sum() / np.maximum(counts, 1), dtype=torch.float32, device=self.device
+        )
+        optimizer = torch.optim.Adam([*self.encoder.parameters(), *self.head.parameters()], lr=0.001)
+        self.encoder.train()
+        self.head.train()
+        for epoch in range(epochs):
+            order = np.random.default_rng(PipelineConfig().random_state + epoch).permutation(len(windows))
+            for start in range(0, len(order), self.batch_size):
+                batch_idx = order[start : start + self.batch_size]
+                inputs = torch.as_tensor(windows[batch_idx], dtype=torch.float32, device=self.device)
+                batch_labels = torch.as_tensor(targets[batch_idx], dtype=torch.long, device=self.device)
+                optimizer.zero_grad()
+                output, _ = self.encoder(inputs)
+                loss = self._loss(self.head(output[:, self.window_size // 2]), batch_labels, class_weights)
+                loss.backward()
+                optimizer.step()
+        self.retrained_on_full_training_ = True
         return self
 
     def predict(self, X, record_ids, epoch_indices):

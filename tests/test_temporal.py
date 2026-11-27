@@ -101,3 +101,18 @@ def test_bilstm_supports_focal_loss_and_subject_validation_groups():
 
     assert 0.0 <= model.validation_n1_f1_ <= 1.0
     assert 0.0 <= model.validation_macro_f1_ <= 1.0
+
+
+def test_bilstm_can_retrain_selected_configuration_on_all_training_windows():
+    pytest.importorskip("torch")
+    rng = np.random.default_rng(12)
+    X = rng.normal(size=(20, 3)).astype(np.float32)
+    labels = np.tile(np.arange(5), 4)
+    records = np.array(["a"] * 10 + ["b"] * 10)
+    epochs = np.tile(np.arange(10), 2)
+    model = WindowBiLSTM(feature_count=3, window_size=3, hidden_size=4, batch_size=4)
+
+    model.fit_full(X, labels, records, epochs, epochs=1)
+
+    assert model.retrained_on_full_training_ is True
+    assert np.all(model.predict(X, records, epochs)[1:9] >= 0)
