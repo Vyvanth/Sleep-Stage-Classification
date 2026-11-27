@@ -77,3 +77,27 @@ def test_bilstm_uses_batched_predictions_without_dropping_sequence_centres():
 
     assert np.all(prediction[[0, 11, 12, 23]] == -1)
     assert np.all(prediction[1:11] >= 0)
+
+
+def test_bilstm_supports_focal_loss_and_subject_validation_groups():
+    pytest.importorskip("torch")
+    rng = np.random.default_rng(9)
+    X = rng.normal(size=(30, 3)).astype(np.float32)
+    labels = np.tile(np.arange(5), 6)
+    records = np.array(["a"] * 10 + ["b"] * 10 + ["c"] * 10)
+    subjects = np.array(["one"] * 10 + ["two"] * 10 + ["three"] * 10)
+    epochs = np.tile(np.arange(10), 3)
+    model = WindowBiLSTM(
+        feature_count=3,
+        window_size=3,
+        hidden_size=4,
+        batch_size=4,
+        loss="focal",
+        focal_gamma=2.0,
+        validation_metric="n1_f1",
+    )
+
+    model.fit(X, labels, records, epochs, epochs=1, patience=1, validation_groups=subjects)
+
+    assert 0.0 <= model.validation_n1_f1_ <= 1.0
+    assert 0.0 <= model.validation_macro_f1_ <= 1.0

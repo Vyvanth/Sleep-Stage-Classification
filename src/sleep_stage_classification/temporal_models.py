@@ -94,15 +94,27 @@ class WindowBiLSTM:
         window_size: int = 11,
         hidden_size: int = 32,
         batch_size: int = 256,
+        loss: str = "weighted_ce",
+        focal_gamma: float = 2.0,
+        validation_metric: str = "macro_f1",
     ):
         if window_size < 3 or window_size % 2 == 0:
             raise ValueError("window_size must be an odd value of at least 3.")
+        if loss not in {"weighted_ce", "focal"}:
+            raise ValueError("loss must be 'weighted_ce' or 'focal'.")
+        if focal_gamma < 0:
+            raise ValueError("focal_gamma must be non-negative.")
+        if validation_metric not in {"macro_f1", "n1_f1"}:
+            raise ValueError("validation_metric must be 'macro_f1' or 'n1_f1'.")
         import torch
 
         self.torch = torch
         torch.manual_seed(PipelineConfig().random_state)
         self.window_size = window_size
         self.batch_size = batch_size
+        self.loss_name = loss
+        self.focal_gamma = focal_gamma
+        self.validation_metric = validation_metric
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.device_name_ = str(self.device)
         self.encoder = torch.nn.LSTM(feature_count, hidden_size, batch_first=True, bidirectional=True).to(self.device)
@@ -119,7 +131,28 @@ class WindowBiLSTM:
                 positions.append(sequence[center])
         return np.asarray(windows, dtype=np.float32), np.asarray(targets, dtype=int), np.asarray(positions, dtype=int)
 
-    def fit(self, X, labels, record_ids, epoch_indices, epochs: int = 15, patience: int = 3):
+    def _loss(self, logits, labels, class_weights):
+        """Return class-weighted cross-entropy or focal loss."""
+
+        torch = self.torch
+        if self.loss_name == "weighted_ce":
+            return torch.nn.functional.cross_entropy(logits, labels, weight=class_weights)
+        log_probabilities = torch.nn.functional.log_softmax(logits, dim=1)
+        log_pt = log_probabilities.gather(1, labels[:, None]).squeeze(1)
+        pt = log_pt.exp()
+        alpha = class_weights[labels]
+        return (-alpha * (1 - pt).pow(self.focal_gamma) * log_pt).mean()
+
+    def fit(
+        self,
+        X,
+        labels,
+        record_ids,
+        epoch_indices,
+        epochs: int = 15,
+        patience: int = 3,
+        validation_groups=None,
+    ):
         from sklearn.model_selection import GroupShuffleSplit
         from sklearn.metrics import f1_score
 
@@ -132,11 +165,15 @@ class WindowBiLSTM:
         if len(windows) == 0:
             raise ValueError("No complete sequence windows were available for BiLSTM training.")
         split = GroupShuffleSplit(n_splits=1, test_size=0.2, random_state=103)
-        window_groups = np.asarray(record_ids)[positions]
+        window_groups = (
+            np.asarray(validation_groups)[positions]
+            if validation_groups is not None
+            else np.asarray(record_ids)[positions]
+        )
         train_idx, validation_idx = next(split.split(windows, targets, window_groups))
         counts = np.bincount(targets[train_idx], minlength=5)
         weights = counts.sum() / np.maximum(counts, 1)
-        criterion = torch.nn.CrossEntropyLoss(weight=torch.tensor(weights, dtype=torch.float32, device=self.device))
+        class_weights = torch.tensor(weights, dtype=torch.float32, device=self.device)
         optimizer = torch.optim.Adam([*self.encoder.parameters(), *self.head.parameters()], lr=0.001)
         best_state, best_score, remaining = None, -1.0, patience
         for _ in range(epochs):
@@ -149,7 +186,7 @@ class WindowBiLSTM:
                 labels = torch.as_tensor(targets[batch_idx], dtype=torch.long, device=self.device)
                 optimizer.zero_grad()
                 output, _ = self.encoder(inputs)
-                loss = criterion(self.head(output[:, self.window_size // 2]), labels)
+                loss = self._loss(self.head(output[:, self.window_size // 2]), labels, class_weights)
                 loss.backward()
                 optimizer.step()
             self.encoder.eval(); self.head.eval()
@@ -163,17 +200,21 @@ class WindowBiLSTM:
                         self.head(valid_output[:, self.window_size // 2]).argmax(dim=1).cpu().numpy()
                     )
             prediction = np.concatenate(valid_predictions)
-            score = f1_score(targets[validation_idx], prediction, average="macro", zero_division=0)
+            macro_f1 = f1_score(targets[validation_idx], prediction, average="macro", zero_division=0)
+            n1_f1 = f1_score(targets[validation_idx], prediction, labels=[1], average="macro", zero_division=0)
+            score = n1_f1 if self.validation_metric == "n1_f1" else macro_f1
             if score > best_score:
                 best_score, remaining = score, patience
                 best_state = (copy.deepcopy(self.encoder.state_dict()), copy.deepcopy(self.head.state_dict()))
+                self.validation_macro_f1_ = macro_f1
+                self.validation_n1_f1_ = n1_f1
             else:
                 remaining -= 1
                 if remaining == 0:
                     break
         self.encoder.load_state_dict(best_state[0])
         self.head.load_state_dict(best_state[1])
-        self.validation_macro_f1_ = best_score
+        self.validation_score_ = best_score
         return self
 
     def predict(self, X, record_ids, epoch_indices):

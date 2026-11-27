@@ -442,14 +442,31 @@ def cmd_temporal_benchmark(args: argparse.Namespace) -> None:
 
     print("[6/7] Training the window BiLSTM...", flush=True)
     selected = result.selected_feature_names
-    bilstm = WindowBiLSTM(
-        feature_count=len(selected),
-        window_size=args.lstm_window,
-        batch_size=args.lstm_batch_size,
-    )
-    bilstm.fit(
-        X_train[selected], y_train, train_records, train_epochs,
-        epochs=args.lstm_epochs, patience=args.lstm_patience,
+    bilstm_candidates = [("weighted_ce", 0.0)]
+    if args.bilstm_loss == "focal":
+        bilstm_candidates = [("focal", args.focal_gamma)]
+    elif args.bilstm_loss == "auto":
+        bilstm_candidates.extend([("focal", 1.0), ("focal", args.focal_gamma)])
+    deduplicated_candidates = list(dict.fromkeys(bilstm_candidates))
+    fitted_bilstms = []
+    for loss_name, focal_gamma in deduplicated_candidates:
+        candidate = WindowBiLSTM(
+            feature_count=len(selected),
+            window_size=args.lstm_window,
+            batch_size=args.lstm_batch_size,
+            loss=loss_name,
+            focal_gamma=focal_gamma,
+            validation_metric=args.bilstm_selection_metric,
+        )
+        candidate.fit(
+            X_train[selected], y_train, train_records, train_epochs,
+            epochs=args.lstm_epochs, patience=args.lstm_patience,
+            validation_groups=train_metadata["subject_id"].to_numpy(),
+        )
+        fitted_bilstms.append(candidate)
+    bilstm = max(
+        fitted_bilstms,
+        key=lambda item: (item.validation_score_, item.validation_macro_f1_),
     )
     bilstm_predictions = _fill_sequence_edges(
         bilstm.predict(X_test[selected], test_records, test_epochs), baseline_predictions
@@ -491,7 +508,21 @@ def cmd_temporal_benchmark(args: argparse.Namespace) -> None:
         "bilstm_window_size": args.lstm_window,
         "bilstm_batch_size": args.lstm_batch_size,
         "bilstm_device": bilstm.device_name_,
+        "bilstm_loss": bilstm.loss_name,
+        "bilstm_focal_gamma": bilstm.focal_gamma,
+        "bilstm_selection_metric": args.bilstm_selection_metric,
         "bilstm_validation_macro_f1": bilstm.validation_macro_f1_,
+        "bilstm_validation_n1_f1": bilstm.validation_n1_f1_,
+        "bilstm_validation_candidates": [
+            {
+                "loss": item.loss_name,
+                "focal_gamma": item.focal_gamma,
+                "selection_score": item.validation_score_,
+                "macro_f1": item.validation_macro_f1_,
+                "n1_f1": item.validation_n1_f1_,
+            }
+            for item in fitted_bilstms
+        ],
         "n1_f1": n1,
         "overall": overall.to_dict(orient="records"),
     }
@@ -681,6 +712,19 @@ def build_parser() -> argparse.ArgumentParser:
     temporal_benchmark.add_argument("--lstm-epochs", type=int, default=15)
     temporal_benchmark.add_argument("--lstm-patience", type=int, default=3)
     temporal_benchmark.add_argument("--lstm-batch-size", type=int, default=256, help="Mini-batch size for memory-safe BiLSTM training")
+    temporal_benchmark.add_argument(
+        "--bilstm-loss",
+        choices=["weighted_ce", "focal", "auto"],
+        default="weighted_ce",
+        help="BiLSTM training loss; 'auto' chooses from weighted CE and focal loss using training validation subjects",
+    )
+    temporal_benchmark.add_argument("--focal-gamma", type=float, default=2.0, help="Focal-loss gamma when focal loss is enabled")
+    temporal_benchmark.add_argument(
+        "--bilstm-selection-metric",
+        choices=["macro_f1", "n1_f1"],
+        default="macro_f1",
+        help="Training-validation metric used for BiLSTM early stopping and auto loss selection",
+    )
     temporal_benchmark.add_argument("--context-lags", type=int, default=1, help="Use previous/next epoch spectral features from the same recording")
     temporal_benchmark.add_argument("--tune-on-training", action="store_true", help="Tune LightGBM only within the final training subjects before evaluation")
     temporal_benchmark.set_defaults(func=cmd_temporal_benchmark)
